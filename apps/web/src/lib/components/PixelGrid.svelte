@@ -31,11 +31,14 @@
 	let offset = $state({ x: 0, y: 0 });
 	let isDragging = $state(false);
 	let dragStart = $state({ x: 0, y: 0 });
+	const MIN_ZOOM = 0.1;
+	const MAX_ZOOM = 10;
 
 	function handleWheel(e: WheelEvent) {
 		e.preventDefault();
 		const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-		const newScale = Math.min(Math.max(scale * zoomFactor, 0.1), 10);
+
+		const newScale = Math.min(Math.max(scale * zoomFactor, MIN_ZOOM), MAX_ZOOM);
 
 		const mouseX = e.clientX;
 		const mouseY = e.clientY;
@@ -48,14 +51,17 @@
 		scale = newScale;
 	}
 
-	function handleMouseDown(e: MouseEvent) {
+	function handleMouseDown(event: Event) {
+		const e = event as MouseEvent;
 		if (e.button === 0) {
 			isDragging = true;
 			dragStart = { x: e.clientX - offset.x, y: e.clientY - offset.y };
 		}
 	}
 
-	function handleMouseMove(e: MouseEvent) {
+	function handleMouseMove(event: Event) {
+		const e = event as MouseEvent;
+
 		if (isDragging) {
 			offset = { x: e.clientX - dragStart.x, y: e.clientY - dragStart.y };
 		}
