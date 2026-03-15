@@ -2,4 +2,4 @@
 	import PixelGrid from '$lib/components/PixelGrid.svelte';
 </script>
 
-<PixelGrid width={100} height={100} />
+<PixelGrid width={1000} height={1000} />

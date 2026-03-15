@@ -1,9 +1,12 @@
 <script lang="ts">
-	import { Canvas, Layer, type Render } from 'svelte-canvas';
+	import { Canvas } from 'svelte-canvas';
 	import { innerWidth, innerHeight } from 'svelte/reactivity/window';
 	import { randomColor } from '$lib/color';
-	import { Pixel } from '$lib/pixel';
-	import type { EventHandler } from 'svelte/elements';
+	import { PixelGridData } from '$lib/pixelGridData';
+	import { DEFAULT_PALETTE } from '$lib/palette';
+	import CursorLayer from './CursorLayer.svelte';
+	import PixelLayer from './PixelLayer.svelte';
+
 	type PixelGridProps = {
 		width: number;
 		height: number;
@@ -11,28 +14,38 @@
 
 	const { width, height }: PixelGridProps = $props();
 
-	let pixelRatioValue: number | 'auto' | undefined = $state('auto');
-
-	function buildPixels(width: number, height: number) {
-		const pixels = Array(width * height);
-		const stride = width;
-		for (let y = 0; y < height; y += 1) {
-			for (let x = 0; x < width; x += 1) {
-				const pixel = new Pixel(x, y, randomColor());
-				pixels[y * stride + x] = pixel;
-			}
-		}
-		return pixels;
-	}
-
-	const pixels = $derived(buildPixels(width, height));
+	const MAX_ZOOM = 2.5;
+	const MIN_ZOOM = 0.1;
+	const INITIAL_PIXEL_SIZE = 20;
 
 	let scale = $state(1);
 	let offset = $state({ x: 0, y: 0 });
 	let isDragging = $state(false);
 	let dragStart = $state({ x: 0, y: 0 });
-	const MIN_ZOOM = 0.1;
-	const MAX_ZOOM = 10;
+	let mouseGridPos = $state<{ x: number; y: number } | 'unset'>('unset');
+	let pixelRatioValue: number | 'auto' | undefined = $state('auto');
+
+	let pixelSize = $derived(INITIAL_PIXEL_SIZE * scale);
+
+	function createPixelGridData(width: number, height: number): PixelGridData {
+		const grid = new PixelGridData(width, height);
+		const paletteKeys = Object.keys(DEFAULT_PALETTE).map(Number);
+		for (let i = 0; i < width * height; i++) {
+			const colorId = paletteKeys[Math.floor(Math.random() * paletteKeys.length)];
+			const color = DEFAULT_PALETTE[colorId];
+			const x = i % width;
+			const y = Math.floor(i / width);
+			grid.setPixel(x, y, color.r, color.g, color.b);
+		}
+		return grid;
+	}
+
+	let gridData = $state(createPixelGridData(width, height));
+
+	function setPixelColor(x: number, y: number, r: number, g: number, b: number): void {
+		gridData.setPixel(x, y, r, g, b);
+		gridData = gridData;
+	}
 
 	function handleWheel(e: WheelEvent) {
 		e.preventDefault();
@@ -65,12 +78,27 @@
 		if (isDragging) {
 			offset = { x: e.clientX - dragStart.x, y: e.clientY - dragStart.y };
 		}
+
+		const canvasX = (e.clientX - offset.x) / scale;
+		const canvasY = (e.clientY - offset.y) / scale;
+		const gridX = Math.floor(canvasX / pixelSize);
+		const gridY = Math.floor(canvasY / pixelSize);
+
+		if (gridX >= 0 && gridX < width && gridY >= 0 && gridY < height) {
+			mouseGridPos = { x: gridX, y: gridY };
+		} else {
+			mouseGridPos = 'unset';
+		}
 	}
 
 	function handleMouseUp() {
 		isDragging = false;
 	}
-	const initialPixelSize = 20;
+
+	function handleMouseLeave() {
+		isDragging = false;
+		mouseGridPos = 'unset';
+	}
 </script>
 
 <svelte:window onwheel={handleWheel} />
@@ -84,34 +112,8 @@
 	onmousedown={handleMouseDown}
 	onmousemove={handleMouseMove}
 	onmouseup={handleMouseUp}
-	onmouseleave={handleMouseUp}
+	onmouseleave={handleMouseLeave}
 >
-	<Layer
-		render={function (opts) {
-			const ctx = opts.context;
-			ctx.save();
-			ctx.translate(offset.x, offset.y);
-			ctx.scale(scale, scale);
-
-			for (let y = 0; y < height; y += 1) {
-				for (let x = 0; x < width; x += 1) {
-					const pixel = pixels[y * width + x];
-					ctx.fillStyle = pixel.color;
-					ctx.fillRect(
-						pixel.x * initialPixelSize,
-						pixel.y * initialPixelSize,
-						initialPixelSize,
-						initialPixelSize
-					);
-				}
-			}
-
-			ctx.restore();
-		}}
-	/>
-	<!-- {#each { length: width } as _, x}
-		{#each { length: height } as _, y}
-			<Pixel width={pixelSize} height={pixelSize} x={x * pixelSize} y={y * pixelSize} color={randomColor()} />
-		{/each}
-	{/each} -->
+	<PixelLayer {gridData} {offset} {scale} {pixelSize} />
+	<CursorLayer {mouseGridPos} {offset} {scale} {pixelSize} />
 </Canvas>
