@@ -1,0 +1,21 @@
+services:
+  api:
+    image: ne1i/pixels_site-api:latest
+    restart: unless-stopped
+    environment:
+      CANVAS_WIDTH: 1000
+      CANVAS_HEIGHT: 1000
+      CANVAS_SAVE_PATH: /data/canvas.bin
+    volumes:
+      - canvas_data:/data
+
+  web:
+    image: ne1i/pixels_site-web:latest
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  canvas_data:

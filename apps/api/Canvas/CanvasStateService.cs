@@ -2,7 +2,7 @@ namespace pixels_site.Api.Canvas;
 
 public class CanvasStateService
 {
-    private static readonly string SavePath = "canvas.bin";
+    private static readonly string SavePath = Environment.GetEnvironmentVariable("CANVAS_SAVE_PATH") ?? "canvas.bin";
 
     private readonly byte[] _buffer;
     private readonly Lock _lock = new();
