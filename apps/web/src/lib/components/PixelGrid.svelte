@@ -6,11 +6,17 @@
 	import type { Color } from '$lib/pixel';
 	import CursorLayer from './CursorLayer.svelte';
 	import PixelLayer from './PixelLayer.svelte';
-	import PixelEditMenu from './PixelEditMenu.svelte';
+	import ColorPalette from './ColorPalette.svelte';
 	import * as signalR from '@microsoft/signalr';
 	import { apiUrl } from '$lib/api';
+	import { DEFAULT_PALETTE } from '$lib/palette';
 
 	const MAX_ZOOM = 2.5;
+	const DEFAULT_BRUSH_COLOR: Color = (() => {
+		const rgb = DEFAULT_PALETTE[0];
+		const hex = (n: number) => n.toString(16).padStart(2, '0').toUpperCase();
+		return `#${hex(rgb.r)}${hex(rgb.g)}${hex(rgb.b)}` as Color;
+	})();
 	const MIN_ZOOM = 0.1;
 	const INITIAL_PIXEL_SIZE = 20;
 
@@ -38,30 +44,14 @@
 	let hasDragged = $state(false);
 	let dragStart = $state({ x: 0, y: 0 });
 	let mouseGridPos = $state<{ x: number; y: number } | 'unset'>('unset');
-	let selectedPixel = $state<{ x: number; y: number } | null>(null);
+	let rightButtonHeld = $state(false);
+	let lastPaintedRight = $state<{ x: number; y: number } | null>(null);
+	let brushColor = $state<Color>(DEFAULT_BRUSH_COLOR);
 	let canvasWidth = $state(0);
 	let canvasHeight = $state(0);
 	let pixelRatioValue: number | 'auto' | undefined = $state('auto');
 
 	let pixelSize = $derived(INITIAL_PIXEL_SIZE * scale);
-
-	function toHex(n: number): string {
-		return n.toString(16).padStart(2, '0').toUpperCase();
-	}
-
-	function pixelToColor(x: number, y: number): Color | null {
-		if (gridData === null) return null;
-		const px = gridData.getPixel(x, y);
-		return px ? `#${toHex(px.r)}${toHex(px.g)}${toHex(px.b)}` : null;
-	}
-
-	let hoveredColor = $derived(
-		mouseGridPos === 'unset' ? null : pixelToColor(mouseGridPos.x, mouseGridPos.y)
-	);
-
-	let selectedColor = $derived(
-		selectedPixel === null ? null : pixelToColor(selectedPixel.x, selectedPixel.y)
-	);
 
 	let gridData = $state<PixelGridData | null>(null);
 
@@ -86,16 +76,21 @@
 		gridData = next;
 	}
 
-	function handleColorChange(color: Color): void {
-		if (selectedPixel === null) return;
+	function colorToRgb(color: Color): { r: number; g: number; b: number } {
 		const hex = color.slice(1);
-		const r = parseInt(hex.slice(0, 2), 16);
-		const g = parseInt(hex.slice(2, 4), 16);
-		const b = parseInt(hex.slice(4, 6), 16);
+		return {
+			r: parseInt(hex.slice(0, 2), 16),
+			g: parseInt(hex.slice(2, 4), 16),
+			b: parseInt(hex.slice(4, 6), 16)
+		};
+	}
 
-		setPixelColor(selectedPixel.x, selectedPixel.y, r, g, b);
+	function applyBrushToPixel(x: number, y: number): void {
+		if (gridData === null) return;
+		const { r, g, b } = colorToRgb(brushColor);
+		setPixelColor(x, y, r, g, b);
 		connection
-			?.invoke('PlacePixel', { x: selectedPixel.x, y: selectedPixel.y, r, g, b })
+			?.invoke('PlacePixel', { x, y, r, g, b })
 			.catch((err) => console.error('PlacePixel failed:', err));
 	}
 
@@ -123,6 +118,18 @@
 			hasDragged = false;
 			dragStart = { x: e.clientX - offset.x, y: e.clientY - offset.y };
 		}
+		if (e.button === 2) {
+			e.preventDefault();
+			rightButtonHeld = true;
+			if (mouseGridPos !== 'unset') {
+				applyBrushToPixel(mouseGridPos.x, mouseGridPos.y);
+				lastPaintedRight = { x: mouseGridPos.x, y: mouseGridPos.y };
+			}
+		}
+	}
+
+	function handleContextMenu(event: Event) {
+		event.preventDefault();
 	}
 
 	function handleMouseMove(event: Event) {
@@ -140,24 +147,37 @@
 
 		if (gridX >= 0 && gridX < canvasWidth && gridY >= 0 && gridY < canvasHeight) {
 			mouseGridPos = { x: gridX, y: gridY };
+			if (
+				rightButtonHeld &&
+				(lastPaintedRight === null ||
+					lastPaintedRight.x !== gridX ||
+					lastPaintedRight.y !== gridY)
+			) {
+				applyBrushToPixel(gridX, gridY);
+				lastPaintedRight = { x: gridX, y: gridY };
+			}
 		} else {
 			mouseGridPos = 'unset';
 		}
 	}
 
-	function handleMouseUp() {
-		if (!hasDragged && mouseGridPos !== 'unset') {
-			selectedPixel = { x: mouseGridPos.x, y: mouseGridPos.y };
-		} else if (hasDragged) {
-			selectedPixel = null;
+	function handleMouseUp(event: Event) {
+		const e = event as MouseEvent;
+		if (e.button === 2) {
+			rightButtonHeld = false;
+			lastPaintedRight = null;
 		}
-		isDragging = false;
-		hasDragged = false;
+		if (e.button === 0) {
+			isDragging = false;
+			hasDragged = false;
+		}
 	}
 
 	function handleMouseLeave() {
 		isDragging = false;
 		hasDragged = false;
+		rightButtonHeld = false;
+		lastPaintedRight = null;
 		mouseGridPos = 'unset';
 	}
 </script>
@@ -174,6 +194,7 @@
 	onmousemove={handleMouseMove}
 	onmouseup={handleMouseUp}
 	onmouseleave={handleMouseLeave}
+	oncontextmenu={handleContextMenu}
 >
 	{#if gridData !== null}
 		<PixelLayer {gridData} {offset} {scale} {pixelSize} />
@@ -181,12 +202,6 @@
 	<CursorLayer {mouseGridPos} {offset} {scale} {pixelSize} />
 </Canvas>
 
-{#if selectedPixel !== null && selectedColor !== null}
-	<PixelEditMenu
-		x={selectedPixel.x}
-		y={selectedPixel.y}
-		color={selectedColor}
-		oncolorchange={handleColorChange}
-		onclose={() => (selectedPixel = null)}
-	/>
-{/if}
+<div class="pointer-events-none fixed inset-0 flex items-end justify-center pb-4">
+	<ColorPalette selectedColor={brushColor} oncolorchange={(c) => (brushColor = c)} />
+</div>

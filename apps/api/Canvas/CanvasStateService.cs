@@ -2,15 +2,21 @@ using System.Runtime.InteropServices;
 
 namespace pixels_site.Api.Canvas;
 
-public class CanvasStateService
+public class CanvasStateService : IDisposable
 {
-    private static readonly string SavePath = Environment.GetEnvironmentVariable("CANVAS_SAVE_PATH") ?? "canvas.bin";
+    private static string ResolveSavePath()
+    {
+        var path = Environment.GetEnvironmentVariable("CANVAS_SAVE_PATH") ?? "canvas.bin";
+        return Path.IsPathRooted(path) ? path : Path.Combine(AppContext.BaseDirectory, path);
+    }
 
+    private readonly string _savePath = ResolveSavePath();
     private readonly Rgb[] _pixels;
     private readonly Lock _lock = new();
     private readonly Timer _saveTimer;
     private bool _dirty;
     private readonly CanvasConfiguration _config;
+    private bool _disposed;
 
     public CanvasStateService(CanvasConfiguration config)
     {
@@ -19,9 +25,9 @@ public class CanvasStateService
         _pixels = new Rgb[count];
 
         int fileSize = count * 3;
-        if (File.Exists(SavePath) && new FileInfo(SavePath).Length == fileSize)
+        if (File.Exists(_savePath) && new FileInfo(_savePath).Length == fileSize)
         {
-            byte[] bytes = File.ReadAllBytes(SavePath);
+            byte[] bytes = File.ReadAllBytes(_savePath);
             for (int i = 0; i < count; i++)
                 _pixels[i] = new Rgb(bytes[i * 3], bytes[i * 3 + 1], bytes[i * 3 + 2]);
         }
@@ -60,9 +66,21 @@ public class CanvasStateService
         {
             if (!_dirty) return;
             ReadOnlySpan<byte> bytes = MemoryMarshal.AsBytes(_pixels.AsSpan());
-            using var fs = File.OpenWrite(SavePath);
-            fs.Write(bytes);
+            using (var fs = new FileStream(_savePath, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                fs.Write(bytes);
+                fs.Flush(flushToDisk: true);
+            }
             _dirty = false;
         }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _saveTimer.Dispose();
+        PersistIfDirty();
+        _disposed = true;
+        GC.SuppressFinalize(this);
     }
 }
