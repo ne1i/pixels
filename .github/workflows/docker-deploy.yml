@@ -46,4 +46,6 @@ jobs:
         with:
           context: apps/web
           push: true
+          build-args: |
+            VITE_API_URL=${{ vars.VITE_API_URL }}
           tags: ${{ vars.DOCKERHUB_USERNAME }}/pixels_site-web:latest
