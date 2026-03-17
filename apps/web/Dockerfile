@@ -7,8 +7,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
-FROM ghcr.io/static-web-server/static-web-server:2-alpine AS runtime
-COPY --from=build /app/build /var/public
-ENV SERVER_ROOT=/var/public
-ENV SERVER_FALLBACK_PAGE=/index.html
+FROM ghcr.io/static-web-server/static-web-server:latest AS runtime
+COPY --from=build /app/build /public
+
 EXPOSE 80
