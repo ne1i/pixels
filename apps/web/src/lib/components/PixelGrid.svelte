@@ -8,6 +8,7 @@
 	import PixelLayer from './PixelLayer.svelte';
 	import PixelEditMenu from './PixelEditMenu.svelte';
 	import * as signalR from '@microsoft/signalr';
+	import { apiUrl } from '$lib/api';
 
 	const MAX_ZOOM = 2.5;
 	const MIN_ZOOM = 0.1;
@@ -17,7 +18,7 @@
 
 	onMount(async () => {
 		const conn = new signalR.HubConnectionBuilder()
-			.withUrl('/hubs/canvas')
+			.withUrl(apiUrl('/hubs/canvas'))
 			.withAutomaticReconnect()
 			.build();
 
@@ -66,8 +67,8 @@
 
 	onMount(async () => {
 		const [configRes, snapshotRes] = await Promise.all([
-			fetch('/api/canvas/config'),
-			fetch('/api/canvas/snapshot')
+			fetch(apiUrl('/api/canvas/config')),
+			fetch(apiUrl('/api/canvas/snapshot'))
 		]);
 		const { width, height } = await configRes.json();
 		const buffer = await snapshotRes.arrayBuffer();

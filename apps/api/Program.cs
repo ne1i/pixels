@@ -11,7 +11,22 @@ builder.Services.AddOpenApi();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<CanvasStateService>();
 
+string? frontendOrigin = Environment.GetEnvironmentVariable("FRONTEND_ORIGIN"); // e.g. https://pixels.aubetoile.dev
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        if (string.IsNullOrEmpty(frontendOrigin))
+            policy.AllowAnyOrigin();
+        else
+            policy.WithOrigins(frontendOrigin);
+        policy.AllowAnyHeader().AllowAnyMethod();
+    });
+});
+
 var app = builder.Build();
+
+app.UseCors();
 
 app.MapOpenApi();
 app.MapScalarApiReference();
