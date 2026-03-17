@@ -3,13 +3,13 @@ using pixels_site.Api.Canvas;
 
 namespace pixels_site.Api.Hubs;
 
-public class CanvasHub(CanvasStateService canvasState, ILogger<CanvasHub> logger) : Hub
+public class CanvasHub(CanvasStateService canvasState, CanvasConfiguration config, ILogger<CanvasHub> logger) : Hub
 {
     public async Task PlacePixel(PixelPlacementRequest request)
     {
         logger.LogInformation("PlacePixel received: ({X}, {Y}) rgb({R}, {G}, {B})", request.X, request.Y, request.R, request.G, request.B);
 
-        if (request.X < 0 || request.X >= CanvasConfig.Width || request.Y < 0 || request.Y >= CanvasConfig.Height)
+        if (request.X < 0 || request.X >= config.Width || request.Y < 0 || request.Y >= config.Height)
             throw new HubException("Invalid pixel coordinates");
 
         if (request.R < 0 || request.R > 255 || request.G < 0 || request.G > 255 || request.B < 0 || request.B > 255)

@@ -1,40 +1,49 @@
+using System.Runtime.InteropServices;
 using pixels_site.Api.Canvas;
 using pixels_site.Api.Hubs;
 using Scalar.AspNetCore;
-
-CanvasConfig.Width = int.Parse(Environment.GetEnvironmentVariable("CANVAS_WIDTH") ?? "1000");
-CanvasConfig.Height = int.Parse(Environment.GetEnvironmentVariable("CANVAS_HEIGHT") ?? "1000");
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
 builder.Services.AddSignalR();
+builder.Services.AddSingleton<CanvasConfiguration>();
 builder.Services.AddSingleton<CanvasStateService>();
 
-string? frontendOrigin = Environment.GetEnvironmentVariable("FRONTEND_ORIGIN"); // e.g. https://pixels.aubetoile.dev
+var frontendOrigin = builder.Configuration["FrontendOrigin"];
+
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(policy =>
+    options.AddPolicy("frontend", policy =>
     {
-        if (string.IsNullOrEmpty(frontendOrigin))
-            policy.AllowAnyOrigin();
-        else
-            policy.WithOrigins(frontendOrigin);
-        policy.AllowAnyHeader().AllowAnyMethod();
+        if (string.IsNullOrWhiteSpace(frontendOrigin))
+        {
+            throw new InvalidOperationException("Missing required configuration: FrontendOrigin");
+        }
+
+        policy
+            .WithOrigins(frontendOrigin)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+
     });
 });
 
 var app = builder.Build();
 
-app.UseCors();
+app.UseCors("frontend");
 
 app.MapOpenApi();
 app.MapScalarApiReference();
 
 app.MapGet("/api/health", () => Results.Ok(new { ok = true }));
-app.MapGet("/api/canvas/config", () => Results.Ok(new { width = CanvasConfig.Width, height = CanvasConfig.Height }));
+app.MapGet("/api/canvas/config", (CanvasConfiguration config) => Results.Ok(new { width = config.Width, height = config.Height }));
 app.MapGet("/api/canvas/snapshot", (CanvasStateService canvasState) =>
-    Results.Bytes(canvasState.GetSnapshot(), "application/octet-stream"));
+{
+    var snapshot = canvasState.GetSnapshot();
+    return Results.Bytes(MemoryMarshal.AsBytes(snapshot.AsSpan()).ToArray(), "application/octet-stream");
+});
 
 app.MapHub<CanvasHub>("/hubs/canvas");
 

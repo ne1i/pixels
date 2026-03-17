@@ -33,7 +33,17 @@ export class PixelGridData {
 	}
 
 	loadBuffer(buffer: Uint8Array): void {
-		this.data.set(buffer.subarray(0, this.data.length));
+		const pixels = this.width * this.height;
+		if (buffer.length === pixels * 3) {
+			for (let i = 0; i < pixels; i++) {
+				this.data[i * 4] = buffer[i * 3];
+				this.data[i * 4 + 1] = buffer[i * 3 + 1];
+				this.data[i * 4 + 2] = buffer[i * 3 + 2];
+				this.data[i * 4 + 3] = 255;
+			}
+		} else {
+			this.data.set(buffer.subarray(0, this.data.length));
+		}
 	}
 
 	clone(): PixelGridData {
