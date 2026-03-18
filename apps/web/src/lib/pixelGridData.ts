@@ -1,3 +1,5 @@
+import type { RGB } from './palette';
+
 export class PixelGridData {
 	private data: Uint8Array;
 	readonly width: number;
@@ -13,16 +15,16 @@ export class PixelGridData {
 		return this.data;
 	}
 
-	setPixel(x: number, y: number, r: number, g: number, b: number): void {
+	setPixel(x: number, y: number, rgb: RGB): void {
 		if (x < 0 || x >= this.width || y < 0 || y >= this.height) return;
 		const idx = (y * this.width + x) * 4;
-		this.data[idx] = r;
-		this.data[idx + 1] = g;
-		this.data[idx + 2] = b;
+		this.data[idx] = rgb.r;
+		this.data[idx + 1] = rgb.g;
+		this.data[idx + 2] = rgb.b;
 		this.data[idx + 3] = 255;
 	}
 
-	getPixel(x: number, y: number): { r: number; g: number; b: number } | null {
+	getPixel(x: number, y: number): RGB | null {
 		if (x < 0 || x >= this.width || y < 0 || y >= this.height) return null;
 		const idx = (y * this.width + x) * 4;
 		return {
@@ -52,12 +54,12 @@ export class PixelGridData {
 		return copy;
 	}
 
-	fill(r: number, g: number, b: number): void {
+	fill(rgb: RGB): void {
 		for (let i = 0; i < this.width * this.height; i++) {
 			const idx = i * 4;
-			this.data[idx] = r;
-			this.data[idx + 1] = g;
-			this.data[idx + 2] = b;
+			this.data[idx] = rgb.r;
+			this.data[idx + 1] = rgb.g;
+			this.data[idx + 2] = rgb.b;
 			this.data[idx + 3] = 255;
 		}
 	}

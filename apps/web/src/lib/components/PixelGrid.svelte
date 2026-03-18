@@ -4,6 +4,7 @@
 	import { innerWidth, innerHeight } from 'svelte/reactivity/window';
 	import { PixelGridData } from '$lib/pixelGridData';
 	import type { Color } from '$lib/pixel';
+	import type { RGB } from '$lib/palette';
 	import CursorLayer from './CursorLayer.svelte';
 	import PixelLayer from './PixelLayer.svelte';
 	import ColorPalette from './ColorPalette.svelte';
@@ -21,23 +22,6 @@
 	const INITIAL_PIXEL_SIZE = 20;
 
 	let connection: signalR.HubConnection | null = $state(null);
-
-	onMount(async () => {
-		const conn = new signalR.HubConnectionBuilder()
-			.withUrl(apiUrl('/hubs/canvas'))
-			.withAutomaticReconnect()
-			.build();
-
-		conn.on(
-			'PixelPlaced',
-			({ x, y, r, g, b }: { x: number; y: number; r: number; g: number; b: number }) => {
-				setPixelColor(x, y, r, g, b);
-			}
-		);
-
-		await conn.start();
-		connection = conn;
-	});
 	let scale = $state(1);
 	let offset = $state({ x: 0, y: 0 });
 	let isDragging = $state(false);
@@ -56,6 +40,20 @@
 	let gridData = $state<PixelGridData | null>(null);
 
 	onMount(async () => {
+		// Initialize SignalR connection
+		const conn = new signalR.HubConnectionBuilder()
+			.withUrl(apiUrl('/hubs/canvas'))
+			.withAutomaticReconnect()
+			.build();
+
+		conn.on('PixelPlaced', ({ x, y, rgb }: { x: number; y: number; rgb: RGB }) => {
+			setPixelColor(x, y, rgb);
+		});
+
+		await conn.start();
+		connection = conn;
+
+		// Load canvas configuration and initial snapshot
 		const [configRes, snapshotRes] = await Promise.all([
 			fetch(apiUrl('/api/canvas/config')),
 			fetch(apiUrl('/api/canvas/snapshot'))
@@ -69,14 +67,14 @@
 		gridData = grid;
 	});
 
-	function setPixelColor(x: number, y: number, r: number, g: number, b: number): void {
+	function setPixelColor(x: number, y: number, rgb: RGB): void {
 		if (gridData === null) return;
 		const next = gridData.clone();
-		next.setPixel(x, y, r, g, b);
+		next.setPixel(x, y, rgb);
 		gridData = next;
 	}
 
-	function colorToRgb(color: Color): { r: number; g: number; b: number } {
+	function colorToRgb(color: Color): RGB {
 		const hex = color.slice(1);
 		return {
 			r: parseInt(hex.slice(0, 2), 16),
@@ -87,10 +85,10 @@
 
 	function applyBrushToPixel(x: number, y: number): void {
 		if (gridData === null) return;
-		const { r, g, b } = colorToRgb(brushColor);
-		setPixelColor(x, y, r, g, b);
+		const rgb = colorToRgb(brushColor);
+		setPixelColor(x, y, rgb);
 		connection
-			?.invoke('PlacePixel', { x, y, r, g, b })
+			?.invoke('PlacePixel', { x, y, rgb })
 			.catch((err) => console.error('PlacePixel failed:', err));
 	}
 
@@ -149,9 +147,7 @@
 			mouseGridPos = { x: gridX, y: gridY };
 			if (
 				rightButtonHeld &&
-				(lastPaintedRight === null ||
-					lastPaintedRight.x !== gridX ||
-					lastPaintedRight.y !== gridY)
+				(lastPaintedRight === null || lastPaintedRight.x !== gridX || lastPaintedRight.y !== gridY)
 			) {
 				applyBrushToPixel(gridX, gridY);
 				lastPaintedRight = { x: gridX, y: gridY };
