@@ -4,13 +4,7 @@ namespace pixels_site.Api.Canvas;
 
 public class CanvasStateService : IDisposable
 {
-    private static string ResolveSavePath()
-    {
-        var path = Environment.GetEnvironmentVariable("CANVAS_SAVE_PATH") ?? "canvas.bin";
-        return Path.IsPathRooted(path) ? path : Path.Combine(AppContext.BaseDirectory, path);
-    }
-
-    private readonly string _savePath = ResolveSavePath();
+    private readonly string _savePath;
     private readonly Rgb[] _pixels;
     private readonly Lock _lock = new();
     private readonly Timer _saveTimer;
@@ -18,9 +12,13 @@ public class CanvasStateService : IDisposable
     private readonly CanvasConfiguration _config;
     private bool _disposed;
 
-    public CanvasStateService(CanvasConfiguration config)
+    public CanvasStateService(CanvasConfiguration config, IConfiguration configuration)
     {
         _config = config;
+
+        var path = configuration.GetValue<string>("CanvasConfig:SavePath") ?? "canvas.bin";
+        _savePath = Path.IsPathRooted(path) ? path : Path.Combine(AppContext.BaseDirectory, path);
+
         int count = config.Width * config.Height;
         _pixels = new Rgb[count];
 
@@ -66,11 +64,15 @@ public class CanvasStateService : IDisposable
         {
             if (!_dirty) return;
             ReadOnlySpan<byte> bytes = MemoryMarshal.AsBytes(_pixels.AsSpan());
-            using (var fs = new FileStream(_savePath, FileMode.Create, FileAccess.Write, FileShare.None))
+            
+            var tempPath = _savePath + ".tmp";
+            using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
                 fs.Write(bytes);
                 fs.Flush(flushToDisk: true);
             }
+            
+            File.Move(tempPath, _savePath, overwrite: true);
             _dirty = false;
         }
     }

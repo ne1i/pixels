@@ -1,12 +1,20 @@
 using Microsoft.AspNetCore.SignalR;
 using pixels_site.Api.Canvas;
+using pixels_site.Api.Services;
 
 namespace pixels_site.Api.Hubs;
 
-public class CanvasHub(CanvasStateService canvasState, CanvasConfiguration config, ILogger<CanvasHub> logger) : Hub
+public class CanvasHub(CanvasStateService canvasState, CanvasConfiguration config, RateLimiter rateLimiter, ILogger<CanvasHub> logger) : Hub
 {
     public async Task PlacePixel(PixelPlacementRequest request)
     {
+        // Rate limiting check
+        if (!rateLimiter.IsAllowed(Context.ConnectionId))
+        {
+            logger.LogWarning("Rate limit exceeded for connection {ConnectionId}", Context.ConnectionId);
+            throw new HubException("Rate limit exceeded. Please slow down.");
+        }
+
         logger.LogInformation("PlacePixel received: ({X}, {Y}) rgb({R}, {G}, {B})", request.X, request.Y, request.R, request.G, request.B);
 
         if (request.X < 0 || request.X >= config.Width || request.Y < 0 || request.Y >= config.Height)

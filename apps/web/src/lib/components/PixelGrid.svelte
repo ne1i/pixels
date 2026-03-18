@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Canvas } from 'svelte-canvas';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { innerWidth, innerHeight } from 'svelte/reactivity/window';
 	import { PixelGridData } from '$lib/pixelGridData';
 	import type { Color } from '$lib/pixel';
@@ -180,6 +180,10 @@
 		lastPaintedRight = null;
 		mouseGridPos = 'unset';
 	}
+
+	onDestroy(() => {
+		connection?.stop();
+	});
 </script>
 
 <svelte:window onwheel={handleWheel} />

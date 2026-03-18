@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using pixels_site.Api.Canvas;
 using pixels_site.Api.Hubs;
+using pixels_site.Api.Services;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,6 +10,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<CanvasConfiguration>();
 builder.Services.AddSingleton<CanvasStateService>();
+builder.Services.AddSingleton<RateLimiter>();
 
 var frontendOrigin = builder.Configuration["FrontendOrigin"];
 
