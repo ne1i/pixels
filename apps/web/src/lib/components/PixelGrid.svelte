@@ -61,6 +61,12 @@
 	let renderVersion = $state(0);
 	let gridData = $state<PixelGridData | null>(null);
 	let removeWheelListener: (() => void) | null = null;
+	let activeTouchPointers = new Map<number, { x: number; y: number }>();
+	let touchMode: 'none' | 'draw' | 'navigate' = 'none';
+	let touchDrawPointerId: number | null = null;
+	let touchGestureStartDistance = 0;
+	let touchGestureStartScale = 1;
+	let touchGestureWorldAnchor = { x: 0, y: 0 };
 
 	let pixelSize = $derived(INITIAL_PIXEL_SIZE);
 
@@ -159,6 +165,66 @@
 
 	function midpoint(a: GridPoint, b: GridPoint): GridPoint {
 		return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+	}
+
+	function distanceBetweenPoints(a: GridPoint, b: GridPoint): number {
+		return Math.hypot(b.x - a.x, b.y - a.y);
+	}
+
+	function getActiveTouchPoints(): GridPoint[] {
+		return [...activeTouchPointers.values()];
+	}
+
+	function beginTouchNavigation(): void {
+		const [firstPoint, secondPoint] = getActiveTouchPoints();
+		if (firstPoint === undefined || secondPoint === undefined) {
+			return;
+		}
+
+		finishStroke();
+		touchMode = 'navigate';
+		touchDrawPointerId = null;
+		mouseGridPos = 'unset';
+
+		const centerPoint = midpoint(firstPoint, secondPoint);
+		touchGestureStartDistance = Math.max(distanceBetweenPoints(firstPoint, secondPoint), 1);
+		touchGestureStartScale = scale;
+		touchGestureWorldAnchor = {
+			x: (centerPoint.x - offset.x) / scale,
+			y: (centerPoint.y - offset.y) / scale
+		};
+	}
+
+	function updateTouchNavigation(): void {
+		const [firstPoint, secondPoint] = getActiveTouchPoints();
+		if (firstPoint === undefined || secondPoint === undefined) {
+			return;
+		}
+
+		const centerPoint = midpoint(firstPoint, secondPoint);
+		const currentDistance = Math.max(distanceBetweenPoints(firstPoint, secondPoint), 1);
+		const newScale = clampZoom(touchGestureStartScale * (currentDistance / touchGestureStartDistance));
+
+		offset = {
+			x: centerPoint.x - touchGestureWorldAnchor.x * newScale,
+			y: centerPoint.y - touchGestureWorldAnchor.y * newScale
+		};
+		scale = newScale;
+	}
+
+	function startTouchDrawing(pointerId: number, point: GridPoint | null): void {
+		finishStroke();
+		touchMode = 'draw';
+		touchDrawPointerId = pointerId;
+
+		if (point === null) {
+			mouseGridPos = 'unset';
+			return;
+		}
+
+		strokeSamples = [point];
+		mouseGridPos = toGridCell(point);
+		applyStrokeSegmentOptimistically(createLineSegment(point, point));
 	}
 
 	function flushPendingSegments(): void {
@@ -550,6 +616,99 @@
 		mouseGridPos = 'unset';
 	}
 
+	function handlePointerDown(event: Event) {
+		const e = event as PointerEvent;
+		if (e.pointerType !== 'touch') {
+			return;
+		}
+
+		e.preventDefault();
+		(e.currentTarget as Element | null)?.setPointerCapture?.(e.pointerId);
+		activeTouchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+		if (activeTouchPointers.size >= 2) {
+			beginTouchNavigation();
+			return;
+		}
+
+		startTouchDrawing(e.pointerId, getGridPointFromClient(e.clientX, e.clientY));
+	}
+
+	function handlePointerMove(event: Event) {
+		const e = event as PointerEvent;
+		if (e.pointerType !== 'touch' || !activeTouchPointers.has(e.pointerId)) {
+			return;
+		}
+
+		e.preventDefault();
+		activeTouchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+		if (touchMode === 'navigate' && activeTouchPointers.size >= 2) {
+			updateTouchNavigation();
+			return;
+		}
+
+		if (touchMode !== 'draw' || touchDrawPointerId !== e.pointerId) {
+			return;
+		}
+
+		const point = getGridPointFromClient(e.clientX, e.clientY);
+		if (point === null) {
+			mouseGridPos = 'unset';
+			return;
+		}
+
+		const cell = toGridCell(point);
+		mouseGridPos = cell;
+
+		const lastPoint = strokeSamples.at(-1);
+		if (lastPoint === undefined || lastPoint.x !== point.x || lastPoint.y !== point.y) {
+			extendStroke(point);
+		}
+	}
+
+	function endTouchPointer(pointerId: number): void {
+		activeTouchPointers.delete(pointerId);
+
+		if (touchMode === 'draw' && touchDrawPointerId === pointerId) {
+			finishStroke();
+			touchDrawPointerId = null;
+			touchMode = 'none';
+			mouseGridPos = 'unset';
+			return;
+		}
+
+		if (touchMode === 'navigate') {
+			if (activeTouchPointers.size >= 2) {
+				beginTouchNavigation();
+			} else {
+				touchMode = 'none';
+				mouseGridPos = 'unset';
+			}
+		}
+	}
+
+	function handlePointerUp(event: Event) {
+		const e = event as PointerEvent;
+		if (e.pointerType !== 'touch') {
+			return;
+		}
+
+		e.preventDefault();
+		(e.currentTarget as Element | null)?.releasePointerCapture?.(e.pointerId);
+		endTouchPointer(e.pointerId);
+	}
+
+	function handlePointerCancel(event: Event) {
+		const e = event as PointerEvent;
+		if (e.pointerType !== 'touch') {
+			return;
+		}
+
+		(e.currentTarget as Element | null)?.releasePointerCapture?.(e.pointerId);
+		endTouchPointer(e.pointerId);
+	}
+
 	onDestroy(() => {
 		if (viewportSaveTimeout !== null) {
 			clearTimeout(viewportSaveTimeout);
@@ -569,13 +728,17 @@
 <Canvas
 	width={innerWidth.current}
 	height={innerHeight.current}
-	class="bg-black {isDragging ? 'cursor-grabbing' : 'cursor-grab'}"
+	class="bg-black touch-none {isDragging ? 'cursor-grabbing' : 'cursor-grab'}"
 	pixelRatio={pixelRatioValue}
 	onresize={(e) => (pixelRatioValue = e.pixelRatio)}
 	onmousedown={handleMouseDown}
 	onmousemove={handleMouseMove}
 	onmouseup={handleMouseUp}
 	onmouseleave={handleMouseLeave}
+	onpointerdown={handlePointerDown}
+	onpointermove={handlePointerMove}
+	onpointerup={handlePointerUp}
+	onpointercancel={handlePointerCancel}
 	oncontextmenu={handleContextMenu}
 >
 	{#if gridData !== null}
