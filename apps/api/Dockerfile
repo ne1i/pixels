@@ -8,8 +8,8 @@ WORKDIR /app
 COPY --from=build /app/publish .
 
 VOLUME ["/data"]
-ENV CanvasConfig__Width=1000
-ENV CanvasConfig__Height=1000
+ENV CANVAS_WIDTH=1000
+ENV CANVAS_HEIGHT=1000
 
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "pixels_site.Api.dll"]

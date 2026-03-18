@@ -3,9 +3,9 @@ services:
     image: ne1i/pixels_site-api:latest
     restart: unless-stopped
     environment:
-      CanvasConfig__Width: 1000
-      CanvasConfig__Height: 1000
-      CanvasConfig__SavePath: /data/canvas.bin
+      CANVAS_WIDTH: 1000
+      CANVAS_HEIGHT: 1000
+      CANVAS_SAVE_PATH: /data/canvas.bin
     volumes:
       - canvas_data:/data
 

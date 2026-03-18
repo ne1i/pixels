@@ -4,7 +4,13 @@ namespace pixels_site.Api.Canvas;
 
 public class CanvasStateService : IDisposable
 {
-    private readonly string _savePath;
+    private static string ResolveSavePath()
+    {
+        var path = Environment.GetEnvironmentVariable("CANVAS_SAVE_PATH") ?? "canvas.bin";
+        return Path.IsPathRooted(path) ? path : Path.Combine(AppContext.BaseDirectory, path);
+    }
+
+    private readonly string _savePath = ResolveSavePath();
     private readonly Rgb[] _pixels;
     private readonly Lock _lock = new();
     private readonly Timer _saveTimer;
@@ -12,13 +18,9 @@ public class CanvasStateService : IDisposable
     private readonly CanvasConfiguration _config;
     private bool _disposed;
 
-    public CanvasStateService(CanvasConfiguration config, IConfiguration configuration)
+    public CanvasStateService(CanvasConfiguration config)
     {
         _config = config;
-
-        var path = configuration.GetValue<string>("CanvasConfig:SavePath") ?? "canvas.bin";
-        _savePath = Path.IsPathRooted(path) ? path : Path.Combine(AppContext.BaseDirectory, path);
-
         int count = config.Width * config.Height;
         _pixels = new Rgb[count];
 
