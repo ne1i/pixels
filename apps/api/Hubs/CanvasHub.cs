@@ -15,7 +15,7 @@ public class CanvasHub(CanvasStateService canvasState, CanvasConfiguration confi
         if (request.Rgb.R < 0 || request.Rgb.R > 255 || request.Rgb.G < 0 || request.Rgb.G > 255 || request.Rgb.B < 0 || request.Rgb.B > 255)
             throw new HubException("Invalid color values");
 
-        canvasState.SetPixel(request.X, request.Y, request.Rgb.R, request.Rgb.G, request.Rgb.B);
+        canvasState.SetPixel(request.X, request.Y, request.Rgb);
 
         logger.LogInformation("Pixel placed at ({X}, {Y}) with color rgb({RGB}) by {ConnectionId}",
             request.X, request.Y, request.Rgb, Context.ConnectionId);

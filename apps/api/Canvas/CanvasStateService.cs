@@ -25,23 +25,24 @@ public class CanvasStateService : IDisposable
         {
             byte[] bytes = File.ReadAllBytes(savePath);
             for (int i = 0; i < count; i++)
-                pixels[i] = new Rgb(bytes[i * 3], bytes[i * 3 + 1], bytes[i * 3 + 2]);
+                pixels[i] = new Rgb { R = bytes[i * 3], G = bytes[i * 3 + 1], B = bytes[i * 3 + 2] }
+            ;
         }
         else
         {
-            var white = new Rgb(255, 255, 255);
+            var white = new Rgb { R = 255, G = 255, B = 255 };
             Array.Fill(pixels, white);
         }
 
         saveTimer = new Timer(_ => PersistIfDirty(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
-    public void SetPixel(int x, int y, int r, int g, int b)
+    public void SetPixel(int x, int y, Rgb Rgb)
     {
         int idx = y * config.Width + x;
         lock (@lock)
         {
-            pixels[idx] = new Rgb((byte)r, (byte)g, (byte)b);
+            pixels[idx] = Rgb;
             dirty = true;
         }
     }

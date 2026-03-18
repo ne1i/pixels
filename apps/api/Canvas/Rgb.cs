@@ -1,11 +1,11 @@
-using System.Runtime.InteropServices;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.Net.Http.Headers;
 
 namespace pixels_site.Api.Canvas;
 
-[StructLayout(LayoutKind.Sequential, Pack = 1)]
-public struct Rgb(byte r, byte g, byte b)
+public struct Rgb
 {
-    public byte R = r;
-    public byte G = g;
-    public byte B = b;
+    public byte R { get; set; }
+    public byte G { get; set; }
+    public byte B { get; set; }
 }
