@@ -18,7 +18,7 @@
 	const paletteEntries = Object.values(DEFAULT_PALETTE).map(rgbToColor);
 	const favorites = new FavoriteColors();
 
-	let customColorInput: HTMLInputElement;
+	let customColorInput = $state<HTMLInputElement | undefined>(undefined);
 
 	function handleCustomColorClick() {
 		customColorInput?.click();
@@ -40,48 +40,27 @@
 </script>
 
 <div
-	class="pointer-events-auto w-full max-w-[min(100%,52rem)] rounded-xl border border-neutral-700 bg-neutral-900/95 px-3 py-3 shadow-2xl backdrop-blur-sm"
+	id="color-palette-panel"
+	class="pointer-events-auto w-full max-w-[min(100%,650px)] rounded-xl border border-neutral-700 bg-neutral-900/95 px-4 py-3 shadow-2xl backdrop-blur-sm"
 	role="toolbar"
 	aria-label="Color palette"
 >
 	<div class="flex flex-col gap-3">
-		<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-4">
-			<div class="flex min-w-0 items-center gap-3 sm:w-auto sm:min-w-[9rem]">
+		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+			<div class="flex items-center gap-3">
+				<span class="text-xs font-medium text-neutral-400">Brush</span>
 				<div
 					class="h-8 w-8 shrink-0 rounded-lg ring-2 ring-neutral-500 ring-offset-2 ring-offset-neutral-900"
 					style="background-color: {selectedColor}"
 					title={selectedColor}
 				></div>
-				<div class="min-w-0">
-					<div class="text-xs font-medium text-neutral-400">
-						Brush
-					</div>
-					<div class="truncate font-mono text-xs text-neutral-200">
-						{selectedColor}
-					</div>
-				</div>
+				<div class="truncate font-mono text-xs text-neutral-300 sm:hidden">{selectedColor}</div>
 			</div>
 
-			<div class="grid flex-1 grid-cols-8 gap-1 sm:grid-cols-12 lg:grid-cols-16">
-				{#each paletteEntries as paletteColor}
-					<button
-						type="button"
-						class="aspect-square w-full rounded border border-white/10 transition-transform hover:scale-105 {paletteColor ===
-						selectedColor
-							? 'ring-2 ring-white ring-offset-1 ring-offset-neutral-900'
-							: ''}"
-						style="background-color: {paletteColor}"
-						onclick={() => oncolorchange(paletteColor)}
-						title={paletteColor}
-						aria-pressed={paletteColor === selectedColor}
-					></button>
-				{/each}
-			</div>
-
-			<div class="flex gap-2 sm:flex-col">
+			<div class="flex gap-2 sm:order-last">
 				<button
 					type="button"
-					class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 border-dashed border-neutral-600 bg-neutral-800 text-neutral-400 transition-all hover:border-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
+					class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 border-dashed border-neutral-600 bg-neutral-800 text-neutral-400 transition hover:border-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
 					onclick={handleCustomColorClick}
 					title="Pick custom color"
 				>
@@ -122,6 +101,22 @@
 				</button>
 			</div>
 
+			<div class="flex flex-wrap gap-1 sm:flex-1">
+				{#each paletteEntries as paletteColor}
+					<button
+						type="button"
+						class="h-6 w-6 shrink-0 rounded transition-transform hover:scale-110 {paletteColor ===
+						selectedColor
+							? 'scale-110 ring-2 ring-white ring-offset-1 ring-offset-neutral-900'
+							: ''}"
+						style="background-color: {paletteColor}"
+						onclick={() => oncolorchange(paletteColor)}
+						title={paletteColor}
+						aria-pressed={paletteColor === selectedColor}
+					></button>
+				{/each}
+			</div>
+
 			<input
 				type="color"
 				bind:this={customColorInput}
@@ -133,18 +128,16 @@
 		</div>
 
 		{#if favorites.list.length > 0}
-			<div class="border-t border-neutral-700 pt-3">
-				<div class="mb-2 text-xs font-medium text-neutral-400">
-					Favorites
-				</div>
-				<div class="grid grid-cols-6 gap-1 sm:grid-cols-8 md:grid-cols-10">
+			<div class="flex flex-col gap-2 border-t border-neutral-700 pt-3 sm:flex-row sm:items-center sm:gap-3">
+				<span class="text-xs font-medium text-neutral-400">Favorites</span>
+				<div class="flex flex-wrap gap-1">
 					{#each favorites.list as favoriteColor}
-						<div class="relative">
+						<div class="group relative h-6 w-6 shrink-0">
 							<button
 								type="button"
-								class="aspect-square w-full rounded border border-white/10 transition-transform hover:scale-105 {favoriteColor ===
+								class="h-6 w-6 rounded transition-transform hover:scale-110 {favoriteColor ===
 								selectedColor
-									? 'ring-2 ring-white ring-offset-1 ring-offset-neutral-900'
+									? 'scale-110 ring-2 ring-white ring-offset-1 ring-offset-neutral-900'
 									: ''}"
 								style="background-color: {favoriteColor}"
 								onclick={() => oncolorchange(favoriteColor)}
@@ -153,8 +146,8 @@
 							></button>
 							<button
 								type="button"
-								class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[10px] text-white transition-colors hover:bg-red-500"
-								onclick={(e) => handleRemoveFromFavorites(favoriteColor, e)}
+								class="absolute -top-1 -right-1 hidden h-4 w-4 items-center justify-center rounded-full bg-red-600 text-xs text-white group-hover:flex"
+								onclick={(event) => handleRemoveFromFavorites(favoriteColor, event)}
 								title="Remove from favorites"
 								aria-label={`Remove ${favoriteColor} from favorites`}
 							>
