@@ -24,6 +24,12 @@ export class PixelGridData {
 		this.data[idx + 3] = 255;
 	}
 
+	setPixels(placements: Array<{ x: number; y: number; rgb: RGB }>): void {
+		for (const placement of placements) {
+			this.setPixel(placement.x, placement.y, placement.rgb);
+		}
+	}
+
 	getPixel(x: number, y: number): RGB | null {
 		if (x < 0 || x >= this.width || y < 0 || y >= this.height) return null;
 		const idx = (y * this.width + x) * 4;
