@@ -65,9 +65,9 @@
 				{#if onpickcolor}
 					<button
 						type="button"
-						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-600 text-neutral-400 transition hover:border-neutral-500 hover:bg-neutral-700 hover:text-neutral-300 {isPickingColor
-							? 'bg-blue-600 border-blue-500 text-white hover:bg-blue-500 hover:border-blue-400 hover:text-white'
-							: 'bg-neutral-800'}"
+						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition {isPickingColor
+							? 'bg-blue-600 border-blue-500 text-white hover:bg-blue-500 hover:border-blue-400'
+							: 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:border-neutral-500 hover:text-neutral-300'}"
 						onclick={onpickcolor}
 						title={isPickingColor ? 'Click on canvas to pick color' : 'Pick color from canvas'}
 					>
@@ -91,9 +91,9 @@
 				{#if onbuckettool}
 					<button
 						type="button"
-						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-600 text-neutral-400 transition hover:border-neutral-500 hover:bg-neutral-700 hover:text-neutral-300 {isBucketToolActive
-							? 'bg-blue-600 border-blue-500 text-white hover:bg-blue-500 hover:border-blue-400 hover:text-white'
-							: 'bg-neutral-800'}"
+						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition {isBucketToolActive
+							? 'bg-blue-600 border-blue-500 text-white hover:bg-blue-500 hover:border-blue-400'
+							: 'bg-neutral-800 border-neutral-600 text-neutral-400 hover:bg-neutral-700 hover:border-neutral-500 hover:text-neutral-300'}"
 						onclick={onbuckettool}
 						title={isBucketToolActive ? 'Click on canvas to fill area' : 'Bucket fill tool'}
 					>

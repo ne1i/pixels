@@ -69,6 +69,7 @@
 	let touchGestureWorldAnchor = { x: 0, y: 0 };
 	let isPaletteVisible = $state(true);
 	let isPickingColor = $state(false);
+	let isBucketToolActive = $state(false);
 
 	let pixelSize = $derived(INITIAL_PIXEL_SIZE);
 
@@ -229,6 +230,13 @@
 		// Handle color picking on touch
 		if (isPickingColor) {
 			pickColorAtCell(cell);
+			touchMode = 'none';
+			return;
+		}
+
+		// Handle bucket fill on touch
+		if (isBucketToolActive) {
+			applyBucketFill(cell);
 			touchMode = 'none';
 			return;
 		}
@@ -494,6 +502,122 @@
 
 	function toggleColorPicker(): void {
 		isPickingColor = !isPickingColor;
+		if (isPickingColor) isBucketToolActive = false;
+	}
+
+	function toggleBucketTool(): void {
+		isBucketToolActive = !isBucketToolActive;
+		if (isBucketToolActive) isPickingColor = false;
+	}
+
+	const BUCKET_FILL_LIMIT = 2500;
+
+	function computeFloodFill(startCell: GridCell, fillRgb: RGB): PixelPlacement[] {
+		if (gridData === null || !isGridCellInBounds(startCell)) return [];
+
+		const t0 = performance.now();
+		
+		const data = gridData.getData();
+		const width = gridData.width;
+		const height = gridData.height;
+
+		const startIdx = (startCell.y * width + startCell.x) * 4;
+		const targetR = data[startIdx];
+		const targetG = data[startIdx + 1];
+		const targetB = data[startIdx + 2];
+
+		if (targetR === fillRgb.r && targetG === fillRgb.g && targetB === fillRgb.b) {
+			console.log('[BUCKET] Target color same as fill color, skipping');
+			return [];
+		}
+
+		const placements: PixelPlacement[] = [];
+		const visited = new Uint8Array(width * height);
+		const queue = new Int32Array(BUCKET_FILL_LIMIT * 2);
+		let queueStart = 0;
+		let queueEnd = 0;
+
+		queue[queueEnd++] = startCell.x;
+		queue[queueEnd++] = startCell.y;
+		visited[startCell.y * width + startCell.x] = 1;
+
+		while (queueStart < queueEnd && placements.length < BUCKET_FILL_LIMIT) {
+			const x = queue[queueStart++];
+			const y = queue[queueStart++];
+
+			const idx = (y * width + x) * 4;
+			if (data[idx] !== targetR || data[idx + 1] !== targetG || data[idx + 2] !== targetB) {
+				continue;
+			}
+
+			placements.push({ x, y, rgb: fillRgb });
+
+			// Up
+			if (y > 0) {
+				const nIdx = (y - 1) * width + x;
+				if (visited[nIdx] === 0) {
+					visited[nIdx] = 1;
+					queue[queueEnd++] = x;
+					queue[queueEnd++] = y - 1;
+				}
+			}
+			// Down
+			if (y < height - 1) {
+				const nIdx = (y + 1) * width + x;
+				if (visited[nIdx] === 0) {
+					visited[nIdx] = 1;
+					queue[queueEnd++] = x;
+					queue[queueEnd++] = y + 1;
+				}
+			}
+			// Left
+			if (x > 0) {
+				const nIdx = y * width + (x - 1);
+				if (visited[nIdx] === 0) {
+					visited[nIdx] = 1;
+					queue[queueEnd++] = x - 1;
+					queue[queueEnd++] = y;
+				}
+			}
+			// Right
+			if (x < width - 1) {
+				const nIdx = y * width + (x + 1);
+				if (visited[nIdx] === 0) {
+					visited[nIdx] = 1;
+					queue[queueEnd++] = x + 1;
+					queue[queueEnd++] = y;
+				}
+			}
+		}
+
+		const t1 = performance.now();
+		console.log(`[BUCKET] computeFloodFill: ${placements.length} pixels in ${(t1 - t0).toFixed(2)}ms`);
+
+		return placements;
+	}
+
+	function applyBucketFill(cell: GridCell): void {
+		const t0 = performance.now();
+		
+		const fillRgb = colorToRgb(brushColor);
+		const placements = computeFloodFill(cell, fillRgb);
+
+		if (placements.length === 0) {
+			return;
+		}
+
+		const t1 = performance.now();
+		setPixelColors(placements);
+		const t2 = performance.now();
+		console.log(`[BUCKET] setPixelColors: ${placements.length} pixels in ${(t2 - t1).toFixed(2)}ms`);
+
+		connection?.invoke('PlacePixels', placements)
+			.then(() => {
+				const t3 = performance.now();
+				console.log(`[BUCKET] PlacePixels network: ${(t3 - t2).toFixed(2)}ms`);
+				console.log(`[BUCKET] Total: ${(t3 - t0).toFixed(2)}ms`);
+			})
+			.catch((err) => console.error('[BUCKET] PlacePixels failed:', err));
 	}
 
 	$effect(() => {
@@ -634,12 +758,16 @@
 		}
 
 		if (e.button === 0) {
-			// Handle color picker on click (not drag)
-			if (!hasDragged && isPickingColor) {
+			// Handle tool actions on click (not drag)
+			if (!hasDragged) {
 				const point = getGridPointFromClient(e.clientX, e.clientY);
 				if (point !== null) {
 					const cell = toGridCell(point);
-					pickColorAtCell(cell);
+					if (isPickingColor) {
+						pickColorAtCell(cell);
+					} else if (isBucketToolActive) {
+						applyBucketFill(cell);
+					}
 				}
 			}
 			isDragging = false;
@@ -767,7 +895,7 @@
 <Canvas
 	width={innerWidth.current}
 	height={innerHeight.current}
-	class="bg-black touch-none {isPickingColor ? 'cursor-crosshair' : isDragging ? 'cursor-grabbing' : 'cursor-grab'}"
+	class="bg-black touch-none {isPickingColor || isBucketToolActive ? 'cursor-crosshair' : isDragging ? 'cursor-grabbing' : 'cursor-grab'}"
 	pixelRatio={pixelRatioValue}
 	onresize={(e) => (pixelRatioValue = e.pixelRatio)}
 	onmousedown={handleMouseDown}
@@ -846,6 +974,8 @@
 			oncolorchange={(color) => (brushColor = color)}
 			onpickcolor={toggleColorPicker}
 			{isPickingColor}
+			onbuckettool={toggleBucketTool}
+			{isBucketToolActive}
 		/>
 	</div>
 </div>
