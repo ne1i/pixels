@@ -67,6 +67,8 @@
 	let touchGestureStartDistance = 0;
 	let touchGestureStartScale = 1;
 	let touchGestureWorldAnchor = { x: 0, y: 0 };
+	let isPaletteVisible = $state(true);
+	let isPickingColor = $state(false);
 
 	let pixelSize = $derived(INITIAL_PIXEL_SIZE);
 
@@ -214,16 +216,26 @@
 
 	function startTouchDrawing(pointerId: number, point: GridPoint | null): void {
 		finishStroke();
-		touchMode = 'draw';
 		touchDrawPointerId = pointerId;
 
 		if (point === null) {
+			touchMode = 'draw';
 			mouseGridPos = 'unset';
 			return;
 		}
 
+		const cell = toGridCell(point);
+
+		// Handle color picking on touch
+		if (isPickingColor) {
+			pickColorAtCell(cell);
+			touchMode = 'none';
+			return;
+		}
+
+		touchMode = 'draw';
 		strokeSamples = [point];
-		mouseGridPos = toGridCell(point);
+		mouseGridPos = cell;
 		applyStrokeSegmentOptimistically(createLineSegment(point, point));
 	}
 
@@ -465,6 +477,25 @@
 		};
 	}
 
+	function rgbToColor(rgb: RGB): Color {
+		const hex = (n: number) => n.toString(16).padStart(2, '0').toUpperCase();
+		return `#${hex(rgb.r)}${hex(rgb.g)}${hex(rgb.b)}` as Color;
+	}
+
+	function pickColorAtCell(cell: GridCell): void {
+		if (gridData === null || !isGridCellInBounds(cell)) return;
+		
+		const rgb = gridData.getPixel(cell.x, cell.y);
+		if (rgb !== null) {
+			brushColor = rgbToColor(rgb);
+		}
+		isPickingColor = false;
+	}
+
+	function toggleColorPicker(): void {
+		isPickingColor = !isPickingColor;
+	}
+
 	$effect(() => {
 		viewportStateReady;
 		scale;
@@ -603,6 +634,14 @@
 		}
 
 		if (e.button === 0) {
+			// Handle color picker on click (not drag)
+			if (!hasDragged && isPickingColor) {
+				const point = getGridPointFromClient(e.clientX, e.clientY);
+				if (point !== null) {
+					const cell = toGridCell(point);
+					pickColorAtCell(cell);
+				}
+			}
 			isDragging = false;
 			hasDragged = false;
 		}
@@ -728,7 +767,7 @@
 <Canvas
 	width={innerWidth.current}
 	height={innerHeight.current}
-	class="bg-black touch-none {isDragging ? 'cursor-grabbing' : 'cursor-grab'}"
+	class="bg-black touch-none {isPickingColor ? 'cursor-crosshair' : isDragging ? 'cursor-grabbing' : 'cursor-grab'}"
 	pixelRatio={pixelRatioValue}
 	onresize={(e) => (pixelRatioValue = e.pixelRatio)}
 	onmousedown={handleMouseDown}
@@ -748,5 +787,65 @@
 </Canvas>
 
 <div class="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-3 pb-3 sm:pb-4">
-	<ColorPalette selectedColor={brushColor} oncolorchange={(color) => (brushColor = color)} />
+	<div
+		class="flex w-full max-w-[min(100%,740px)] flex-col items-center transition-transform duration-100 ease-out {isPaletteVisible
+			? 'translate-y-0'
+			: 'translate-y-[calc(100%-2.75rem)]'}"
+	>
+		<!-- Toggle Button -->
+		<button
+			type="button"
+			class="pointer-events-auto mb-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-neutral-300 shadow-lg ring-1 ring-neutral-700 transition-colors hover:bg-neutral-700 hover:text-white"
+			onclick={() => (isPaletteVisible = !isPaletteVisible)}
+			aria-expanded={isPaletteVisible}
+			aria-controls="color-palette-panel"
+			title={isPaletteVisible ? 'Hide palette' : 'Show palette'}
+		>
+			{#if isPaletteVisible}
+				<!-- Chevron down / collapse icon -->
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<path d="m6 9 6 6 6-6" />
+				</svg>
+			{:else}
+				<!-- Paint palette icon -->
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					width="20"
+					height="20"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+					<circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+					<circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+					<circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+					<path
+						d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2z"
+					/>
+				</svg>
+			{/if}
+		</button>
+
+		<!-- Color Palette -->
+		<ColorPalette
+			selectedColor={brushColor}
+			oncolorchange={(color) => (brushColor = color)}
+			onpickcolor={toggleColorPicker}
+			{isPickingColor}
+		/>
+	</div>
 </div>

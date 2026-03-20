@@ -6,9 +6,13 @@
 	type ColorPaletteProps = {
 		selectedColor: Color;
 		oncolorchange: (color: Color) => void;
+		onpickcolor?: () => void;
+		isPickingColor?: boolean;
+		onbuckettool?: () => void;
+		isBucketToolActive?: boolean;
 	};
 
-	const { selectedColor, oncolorchange }: ColorPaletteProps = $props();
+	const { selectedColor, oncolorchange, onpickcolor, isPickingColor = false, onbuckettool, isBucketToolActive = false }: ColorPaletteProps = $props();
 
 	function rgbToColor(rgb: RGB): Color {
 		const hex = (n: number) => n.toString(16).padStart(2, '0').toUpperCase();
@@ -41,7 +45,7 @@
 
 <div
 	id="color-palette-panel"
-	class="pointer-events-auto w-full max-w-[min(100%,650px)] rounded-xl border border-neutral-700 bg-neutral-900/95 px-4 py-3 shadow-2xl backdrop-blur-sm"
+	class="pointer-events-auto w-full max-w-[min(100%,740px)] rounded-xl border border-neutral-700 bg-neutral-900/95 px-4 py-3 shadow-2xl backdrop-blur-sm"
 	role="toolbar"
 	aria-label="Color palette"
 >
@@ -58,9 +62,62 @@
 			</div>
 
 			<div class="flex gap-2 sm:order-last">
+				{#if onpickcolor}
+					<button
+						type="button"
+						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-600 text-neutral-400 transition hover:border-neutral-500 hover:bg-neutral-700 hover:text-neutral-300 {isPickingColor
+							? 'bg-blue-600 border-blue-500 text-white hover:bg-blue-500 hover:border-blue-400 hover:text-white'
+							: 'bg-neutral-800'}"
+						onclick={onpickcolor}
+						title={isPickingColor ? 'Click on canvas to pick color' : 'Pick color from canvas'}
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="16"
+							height="16"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="m2 22 1-1h3l9-9" />
+							<path d="M3 21v-3l9-9" />
+							<path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z" />
+						</svg>
+					</button>
+				{/if}
+				{#if onbuckettool}
+					<button
+						type="button"
+						class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-600 text-neutral-400 transition hover:border-neutral-500 hover:bg-neutral-700 hover:text-neutral-300 {isBucketToolActive
+							? 'bg-blue-600 border-blue-500 text-white hover:bg-blue-500 hover:border-blue-400 hover:text-white'
+							: 'bg-neutral-800'}"
+						onclick={onbuckettool}
+						title={isBucketToolActive ? 'Click on canvas to fill area' : 'Bucket fill tool'}
+					>
+						<svg
+							xmlns="http://www.w3.org/2000/svg"
+							width="16"
+							height="16"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z" />
+							<path d="m5 2 5 5" />
+							<path d="M2 13h15" />
+							<path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z" />
+						</svg>
+					</button>
+				{/if}
 				<button
 					type="button"
-					class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 border-dashed border-neutral-600 bg-neutral-800 text-neutral-400 transition hover:border-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
+					class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-600 bg-neutral-800 text-neutral-400 transition hover:border-neutral-500 hover:bg-neutral-700 hover:text-neutral-300"
 					onclick={handleCustomColorClick}
 					title="Pick custom color"
 				>
@@ -102,7 +159,7 @@
 			</div>
 
 			<div class="flex flex-wrap gap-1 sm:flex-1">
-				{#each paletteEntries as paletteColor}
+				{#each paletteEntries as paletteColor (paletteColor)}
 					<button
 						type="button"
 						class="h-6 w-6 shrink-0 rounded transition-transform hover:scale-110 {paletteColor ===
@@ -131,7 +188,7 @@
 			<div class="flex flex-col gap-2 border-t border-neutral-700 pt-3 sm:flex-row sm:items-center sm:gap-3">
 				<span class="text-xs font-medium text-neutral-400">Favorites</span>
 				<div class="flex flex-wrap gap-1">
-					{#each favorites.list as favoriteColor}
+					{#each favorites.list as favoriteColor (favoriteColor)}
 						<div class="group relative h-6 w-6 shrink-0">
 							<button
 								type="button"
