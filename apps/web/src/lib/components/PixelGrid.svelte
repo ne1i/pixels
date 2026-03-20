@@ -59,8 +59,8 @@
 	let pixelRatioValue: number | 'auto' | undefined = $state('auto');
 	let viewportStateReady = $state(false);
 	let viewportSaveTimeout: ReturnType<typeof setTimeout> | null = null;
-	let pendingSegments: StrokeSegment[] = [];
-	let pendingSegmentsFrame: number | null = null;
+	let pendingStrokePlacements: PixelPlacement[] = [];
+	let pendingStrokePlacementsFrame: number | null = null;
 	let pendingIncrementalPlacements: PixelPlacement[] = [];
 	let pendingIncrementalFrame: number | null = null;
 	let renderVersion = $state(0);
@@ -300,31 +300,37 @@
 		applyStrokeSegmentOptimistically(createLineSegment(point, point));
 	}
 
-	function flushPendingSegments(): void {
-		const queuedSegments = pendingSegments;
-		pendingSegments = [];
+	function flushPendingStrokePlacements(): void {
+		const queuedPlacements = pendingStrokePlacements;
+		pendingStrokePlacements = [];
 
-		if (queuedSegments.length === 0) {
+		if (queuedPlacements.length === 0) {
 			return;
 		}
 
+		const unique: Record<string, PixelPlacement> = {};
+		for (const placement of queuedPlacements) {
+			unique[`${placement.x},${placement.y}`] = placement;
+		}
+
+		const dedupedPlacements = Object.values(unique);
 		connection
-			?.invoke('PlaceStrokeSegments', queuedSegments)
-			.catch((err) => console.error('PlaceStrokeSegments failed:', err));
+			?.invoke('PlacePixels', dedupedPlacements)
+			.catch((err) => console.error('PlacePixels (stroke) failed:', err));
 	}
 
-	function queueStrokeSegment(segment: StrokeSegment): void {
+	function queueStrokePlacements(placements: PixelPlacement[]): void {
 		if (typeof window === 'undefined') return;
 
-		pendingSegments = [...pendingSegments, segment];
+		pendingStrokePlacements = [...pendingStrokePlacements, ...placements];
 
-		if (pendingSegmentsFrame !== null) {
+		if (pendingStrokePlacementsFrame !== null) {
 			return;
 		}
 
-		pendingSegmentsFrame = window.requestAnimationFrame(() => {
-			pendingSegmentsFrame = null;
-			flushPendingSegments();
+		pendingStrokePlacementsFrame = window.requestAnimationFrame(() => {
+			pendingStrokePlacementsFrame = null;
+			flushPendingStrokePlacements();
 		});
 	}
 
@@ -431,7 +437,7 @@
 			return;
 		}
 
-		queueStrokeSegment(segment);
+		queueStrokePlacements(placements);
 	}
 
 	function createLineSegment(from: GridPoint, to: GridPoint): StrokeSegment {
@@ -633,8 +639,6 @@
 	function computeFloodFill(startCell: GridCell, fillRgb: RGB): PixelPlacement[] {
 		if (gridData === null || !isGridCellInBounds(startCell)) return [];
 
-		const t0 = performance.now();
-
 		const data = gridData.getData();
 		const width = gridData.width;
 		const height = gridData.height;
@@ -645,7 +649,6 @@
 		const targetB = data[startIdx + 2];
 
 		if (targetR === fillRgb.r && targetG === fillRgb.g && targetB === fillRgb.b) {
-			console.log('[BUCKET] Target color same as fill color, skipping');
 			return [];
 		}
 
@@ -708,11 +711,6 @@
 			}
 		}
 
-		const t1 = performance.now();
-		console.log(
-			`[BUCKET] computeFloodFill: ${placements.length} pixels in ${(t1 - t0).toFixed(2)}ms`
-		);
-
 		return placements;
 	}
 
@@ -734,23 +732,11 @@
 	}
 
 	function executeBucketFill(placements: PixelPlacement[]): void {
-		const t0 = performance.now();
-
-		const t1 = performance.now();
 		setPixelColors(placements);
-		const t2 = performance.now();
-		console.log(
-			`[BUCKET] setPixelColors: ${placements.length} pixels in ${(t2 - t1).toFixed(2)}ms`
-		);
 
 		connection
 			?.invoke('PlacePixels', placements)
-			.then(() => {
-				const t3 = performance.now();
-				console.log(`[BUCKET] PlacePixels network: ${(t3 - t2).toFixed(2)}ms`);
-				console.log(`[BUCKET] Total: ${(t3 - t0).toFixed(2)}ms`);
-			})
-			.catch((err) => console.error('[BUCKET] PlacePixels failed:', err));
+			.catch((err) => console.error('PlacePixels failed:', err));
 	}
 
 	function confirmBucketFill(): void {
@@ -787,16 +773,6 @@
 
 		conn.on('PixelsPlaced', (placements: PixelPlacement[]) => {
 			setPixelColors(placements);
-		});
-
-		conn.on('StrokeSegmentsPlaced', (segments: StrokeSegment[]) => {
-			for (const segment of segments) {
-				if (segment.clientId === LOCAL_CLIENT_ID) {
-					continue;
-				}
-
-				applyColorToCells(renderStrokeSegment(segment), segment.rgb);
-			}
 		});
 
 		await conn.start();
@@ -1037,10 +1013,10 @@
 			clearTimeout(viewportSaveTimeout);
 		}
 
-		if (pendingSegmentsFrame !== null && typeof window !== 'undefined') {
-			window.cancelAnimationFrame(pendingSegmentsFrame);
-			pendingSegmentsFrame = null;
-			flushPendingSegments();
+		if (pendingStrokePlacementsFrame !== null && typeof window !== 'undefined') {
+			window.cancelAnimationFrame(pendingStrokePlacementsFrame);
+			pendingStrokePlacementsFrame = null;
+			flushPendingStrokePlacements();
 		}
 
 		if (pendingIncrementalFrame !== null && typeof window !== 'undefined') {
