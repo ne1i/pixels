@@ -2,6 +2,7 @@
 	import { Canvas } from 'svelte-canvas';
 	import { onDestroy, onMount } from 'svelte';
 	import { on } from 'svelte/events';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { innerHeight, innerWidth } from 'svelte/reactivity/window';
 	import { apiUrl } from '$lib/api';
 	import type { Color } from '$lib/pixel';
@@ -40,6 +41,7 @@
 		const hex = (n: number) => n.toString(16).padStart(2, '0').toUpperCase();
 		return `#${hex(rgb.r)}${hex(rgb.g)}${hex(rgb.b)}` as Color;
 	})();
+	const ERASER_COLOR = '#FFFFFF' as Color;
 
 	let connection: signalR.HubConnection | null = $state(null);
 	let scale = $state(1);
@@ -49,6 +51,7 @@
 	let dragStart = $state({ x: 0, y: 0 });
 	let mouseGridPos = $state<{ x: number; y: number } | 'unset'>('unset');
 	let rightButtonHeld = $state(false);
+	let rightButtonStrokeActive = $state(false);
 	let strokeSamples = $state<GridPoint[]>([]);
 	let brushColor = $state<Color>(DEFAULT_BRUSH_COLOR);
 	let canvasWidth = $state(0);
@@ -58,10 +61,14 @@
 	let viewportSaveTimeout: ReturnType<typeof setTimeout> | null = null;
 	let pendingSegments: StrokeSegment[] = [];
 	let pendingSegmentsFrame: number | null = null;
+	let pendingIncrementalPlacements: PixelPlacement[] = [];
+	let pendingIncrementalFrame: number | null = null;
 	let renderVersion = $state(0);
+	let incrementalPlacements = $state<PixelPlacement[]>([]);
+	let incrementalVersion = $state(0);
 	let gridData = $state<PixelGridData | null>(null);
 	let removeWheelListener: (() => void) | null = null;
-	let activeTouchPointers = new Map<number, { x: number; y: number }>();
+	let activeTouchPointers = new SvelteMap<number, { x: number; y: number }>();
 	let touchMode: 'none' | 'draw' | 'navigate' = 'none';
 	let touchDrawPointerId: number | null = null;
 	let touchGestureStartDistance = 0;
@@ -70,8 +77,51 @@
 	let isPaletteVisible = $state(true);
 	let isPickingColor = $state(false);
 	let isBucketToolActive = $state(false);
+	let isEraserToolActive = $state(false);
+	let brushSize = $state(1);
+	let effectiveCursorSize = $derived(isPickingColor || isBucketToolActive ? 1 : brushSize);
 
 	let pixelSize = $derived(INITIAL_PIXEL_SIZE);
+
+	const brushOffsetsBySize: Partial<Record<number, GridCell[]>> = {};
+
+	function clampBrushSize(value: number): number {
+		if (!Number.isFinite(value)) return 1;
+		return Math.min(8, Math.max(1, Math.round(value)));
+	}
+
+	function getActiveStrokeColor(): Color {
+		return isEraserToolActive ? ERASER_COLOR : brushColor;
+	}
+
+	function getBrushOffsets(size: number): GridCell[] {
+		const clampedSize = clampBrushSize(size);
+		const cachedOffsets = brushOffsetsBySize[clampedSize];
+		if (cachedOffsets !== undefined) {
+			return cachedOffsets;
+		}
+
+		if (clampedSize === 1) {
+			const offsets = [{ x: 0, y: 0 }];
+			brushOffsetsBySize[clampedSize] = offsets;
+			return offsets;
+		}
+
+		const radius = clampedSize - 1;
+		const radiusSquared = radius * radius;
+		const offsets: GridCell[] = [];
+
+		for (let y = -radius; y <= radius; y += 1) {
+			for (let x = -radius; x <= radius; x += 1) {
+				if (x * x + y * y <= radiusSquared) {
+					offsets.push({ x, y });
+				}
+			}
+		}
+
+		brushOffsetsBySize[clampedSize] = offsets;
+		return offsets;
+	}
 
 	function clampZoom(value: number): number {
 		return Math.min(Math.max(value, MIN_ZOOM), MAX_ZOOM);
@@ -206,13 +256,16 @@
 
 		const centerPoint = midpoint(firstPoint, secondPoint);
 		const currentDistance = Math.max(distanceBetweenPoints(firstPoint, secondPoint), 1);
-		const newScale = clampZoom(touchGestureStartScale * (currentDistance / touchGestureStartDistance));
+		const newScale = clampZoom(
+			touchGestureStartScale * (currentDistance / touchGestureStartDistance)
+		);
 
 		offset = {
 			x: centerPoint.x - touchGestureWorldAnchor.x * newScale,
 			y: centerPoint.y - touchGestureWorldAnchor.y * newScale
 		};
 		scale = newScale;
+		scheduleViewportSave();
 	}
 
 	function startTouchDrawing(pointerId: number, point: GridPoint | null): void {
@@ -275,17 +328,54 @@
 		});
 	}
 
-	function setPixelColors(placements: PixelPlacement[]): void {
+	function flushIncrementalPlacements(): void {
+		const nextPlacements = pendingIncrementalPlacements;
+		pendingIncrementalPlacements = [];
+
+		if (nextPlacements.length === 0) {
+			return;
+		}
+
+		incrementalPlacements = nextPlacements;
+		incrementalVersion += 1;
+	}
+
+	function scheduleIncrementalPlacements(placements: PixelPlacement[]): void {
+		pendingIncrementalPlacements = [...pendingIncrementalPlacements, ...placements];
+
+		if (typeof window === 'undefined') {
+			flushIncrementalPlacements();
+			return;
+		}
+
+		if (pendingIncrementalFrame !== null) {
+			return;
+		}
+
+		pendingIncrementalFrame = window.requestAnimationFrame(() => {
+			pendingIncrementalFrame = null;
+			flushIncrementalPlacements();
+		});
+	}
+
+	function setPixelColors(
+		placements: PixelPlacement[],
+		options?: { forceFullSync?: boolean }
+	): void {
 		if (gridData === null || placements.length === 0) return;
 
 		gridData.setPixels(placements);
-		renderVersion += 1;
+		scheduleIncrementalPlacements(placements);
+
+		if (options?.forceFullSync === true) {
+			renderVersion += 1;
+		}
 	}
 
 	function createPlacementsFromCells(cells: GridCell[], rgb: RGB): PixelPlacement[] {
 		if (gridData === null || cells.length === 0) return [];
 
-		const uniqueCells = new Set<string>();
+		const uniqueCells: Record<string, true> = {};
 		const placements: PixelPlacement[] = [];
 
 		for (const cell of cells) {
@@ -294,11 +384,11 @@
 			}
 
 			const key = `${cell.x},${cell.y}`;
-			if (uniqueCells.has(key)) {
+			if (key in uniqueCells) {
 				continue;
 			}
 
-			uniqueCells.add(key);
+			uniqueCells[key] = true;
 			const currentPixel = gridData.getPixel(cell.x, cell.y);
 			if (
 				currentPixel !== null &&
@@ -349,7 +439,7 @@
 			kind: 'line',
 			from,
 			to,
-			rgb: colorToRgb(brushColor),
+			rgb: colorToRgb(getActiveStrokeColor()),
 			clientId: LOCAL_CLIENT_ID
 		};
 	}
@@ -364,7 +454,7 @@
 			from,
 			control,
 			to,
-			rgb: colorToRgb(brushColor),
+			rgb: colorToRgb(getActiveStrokeColor()),
 			clientId: LOCAL_CLIENT_ID
 		};
 	}
@@ -381,15 +471,24 @@
 		}
 
 		if (previousCell === null) {
-			cells.push(cell);
+			applyBrushAtCell(cell, cells);
 			return cell;
 		}
 
 		if (previousCell.x !== cell.x || previousCell.y !== cell.y) {
-			cells.push(...drawInterpolatedLine(previousCell, cell));
+			const interpolatedCells = drawInterpolatedLine(previousCell, cell);
+			for (const interpolatedCell of interpolatedCells) {
+				applyBrushAtCell(interpolatedCell, cells);
+			}
 		}
 
 		return cell;
+	}
+
+	function applyBrushAtCell(centerCell: GridCell, cells: GridCell[]): void {
+		for (const offsetCell of getBrushOffsets(brushSize)) {
+			cells.push({ x: centerCell.x + offsetCell.x, y: centerCell.y + offsetCell.y });
+		}
 	}
 
 	function drawLineSegment(start: GridPoint, end: GridPoint): GridCell[] {
@@ -426,14 +525,8 @@
 			const inverseT = 1 - t;
 			previousCell = paintPointSample(
 				{
-					x:
-						inverseT * inverseT * start.x +
-						2 * inverseT * t * control.x +
-						t * t * end.x,
-					y:
-						inverseT * inverseT * start.y +
-						2 * inverseT * t * control.y +
-						t * t * end.y
+					x: inverseT * inverseT * start.x + 2 * inverseT * t * control.x + t * t * end.x,
+					y: inverseT * inverseT * start.y + 2 * inverseT * t * control.y + t * t * end.y
 				},
 				previousCell,
 				cells
@@ -492,7 +585,7 @@
 
 	function pickColorAtCell(cell: GridCell): void {
 		if (gridData === null || !isGridCellInBounds(cell)) return;
-		
+
 		const rgb = gridData.getPixel(cell.x, cell.y);
 		if (rgb !== null) {
 			brushColor = rgbToColor(rgb);
@@ -500,23 +593,48 @@
 		isPickingColor = false;
 	}
 
+	function setBrushColor(color: Color): void {
+		brushColor = color;
+		isEraserToolActive = false;
+	}
+
 	function toggleColorPicker(): void {
 		isPickingColor = !isPickingColor;
-		if (isPickingColor) isBucketToolActive = false;
+		if (isPickingColor) {
+			isBucketToolActive = false;
+			isEraserToolActive = false;
+		}
 	}
 
 	function toggleBucketTool(): void {
 		isBucketToolActive = !isBucketToolActive;
-		if (isBucketToolActive) isPickingColor = false;
+		if (isBucketToolActive) {
+			isPickingColor = false;
+			isEraserToolActive = false;
+		}
+	}
+
+	function toggleEraserTool(): void {
+		isEraserToolActive = !isEraserToolActive;
+		if (isEraserToolActive) {
+			isPickingColor = false;
+			isBucketToolActive = false;
+		}
+	}
+
+	function setBrushSize(value: number): void {
+		brushSize = clampBrushSize(value);
 	}
 
 	const BUCKET_FILL_LIMIT = 2500;
+	const BUCKET_FILL_CONFIRM_THRESHOLD = 500;
+	let pendingBucketFillPlacements = $state<PixelPlacement[] | null>(null);
 
 	function computeFloodFill(startCell: GridCell, fillRgb: RGB): PixelPlacement[] {
 		if (gridData === null || !isGridCellInBounds(startCell)) return [];
 
 		const t0 = performance.now();
-		
+
 		const data = gridData.getData();
 		const width = gridData.width;
 		const height = gridData.height;
@@ -591,27 +709,42 @@
 		}
 
 		const t1 = performance.now();
-		console.log(`[BUCKET] computeFloodFill: ${placements.length} pixels in ${(t1 - t0).toFixed(2)}ms`);
+		console.log(
+			`[BUCKET] computeFloodFill: ${placements.length} pixels in ${(t1 - t0).toFixed(2)}ms`
+		);
 
 		return placements;
 	}
 
 	function applyBucketFill(cell: GridCell): void {
-		const t0 = performance.now();
-		
 		const fillRgb = colorToRgb(brushColor);
 		const placements = computeFloodFill(cell, fillRgb);
+		isBucketToolActive = false;
 
 		if (placements.length === 0) {
 			return;
 		}
 
+		if (placements.length > BUCKET_FILL_CONFIRM_THRESHOLD) {
+			pendingBucketFillPlacements = placements;
+			return;
+		}
+
+		executeBucketFill(placements);
+	}
+
+	function executeBucketFill(placements: PixelPlacement[]): void {
+		const t0 = performance.now();
+
 		const t1 = performance.now();
 		setPixelColors(placements);
 		const t2 = performance.now();
-		console.log(`[BUCKET] setPixelColors: ${placements.length} pixels in ${(t2 - t1).toFixed(2)}ms`);
+		console.log(
+			`[BUCKET] setPixelColors: ${placements.length} pixels in ${(t2 - t1).toFixed(2)}ms`
+		);
 
-		connection?.invoke('PlacePixels', placements)
+		connection
+			?.invoke('PlacePixels', placements)
 			.then(() => {
 				const t3 = performance.now();
 				console.log(`[BUCKET] PlacePixels network: ${(t3 - t2).toFixed(2)}ms`);
@@ -620,13 +753,23 @@
 			.catch((err) => console.error('[BUCKET] PlacePixels failed:', err));
 	}
 
-	$effect(() => {
-		viewportStateReady;
-		scale;
-		offset.x;
-		offset.y;
-		scheduleViewportSave();
-	});
+	function confirmBucketFill(): void {
+		if (pendingBucketFillPlacements === null || pendingBucketFillPlacements.length === 0) {
+			pendingBucketFillPlacements = null;
+			return;
+		}
+
+		executeBucketFill(pendingBucketFillPlacements);
+		pendingBucketFillPlacements = null;
+	}
+
+	function cancelBucketFill(): void {
+		pendingBucketFillPlacements = null;
+	}
+
+	function stopEventPropagation(event: Event): void {
+		event.stopPropagation();
+	}
 
 	onMount(async () => {
 		loadViewportState();
@@ -670,6 +813,8 @@
 		const grid = new PixelGridData(width, height);
 		grid.loadBuffer(new Uint8Array(buffer));
 		gridData = grid;
+		incrementalPlacements = [];
+		pendingIncrementalPlacements = [];
 		renderVersion += 1;
 	});
 
@@ -694,6 +839,7 @@
 		};
 
 		scale = newScale;
+		scheduleViewportSave();
 	}
 
 	function handleMouseDown(event: Event) {
@@ -709,10 +855,29 @@
 			e.preventDefault();
 			rightButtonHeld = true;
 			const point = getGridPointFromClient(e.clientX, e.clientY);
-			if (point !== null) {
-				strokeSamples = [point];
-				applyStrokeSegmentOptimistically(createLineSegment(point, point));
+
+			if (point === null) {
+				rightButtonStrokeActive = false;
+				return;
 			}
+
+			const cell = toGridCell(point);
+
+			if (isPickingColor) {
+				pickColorAtCell(cell);
+				rightButtonStrokeActive = false;
+				return;
+			}
+
+			if (isBucketToolActive) {
+				applyBucketFill(cell);
+				rightButtonStrokeActive = false;
+				return;
+			}
+
+			rightButtonStrokeActive = true;
+			strokeSamples = [point];
+			applyStrokeSegmentOptimistically(createLineSegment(point, point));
 		}
 	}
 
@@ -726,6 +891,7 @@
 		if (isDragging) {
 			hasDragged = true;
 			offset = { x: e.clientX - dragStart.x, y: e.clientY - dragStart.y };
+			scheduleViewportSave();
 		}
 
 		const point = getGridPointFromClient(e.clientX, e.clientY);
@@ -734,13 +900,9 @@
 			const cell = toGridCell(point);
 			mouseGridPos = cell;
 
-			if (rightButtonHeld) {
+			if (rightButtonHeld && rightButtonStrokeActive) {
 				const lastPoint = strokeSamples.at(-1);
-				if (
-					lastPoint === undefined ||
-					lastPoint.x !== point.x ||
-					lastPoint.y !== point.y
-				) {
+				if (lastPoint === undefined || lastPoint.x !== point.x || lastPoint.y !== point.y) {
 					extendStroke(point);
 				}
 			}
@@ -754,22 +916,13 @@
 
 		if (e.button === 2) {
 			rightButtonHeld = false;
-			finishStroke();
+			if (rightButtonStrokeActive) {
+				finishStroke();
+			}
+			rightButtonStrokeActive = false;
 		}
 
 		if (e.button === 0) {
-			// Handle tool actions on click (not drag)
-			if (!hasDragged) {
-				const point = getGridPointFromClient(e.clientX, e.clientY);
-				if (point !== null) {
-					const cell = toGridCell(point);
-					if (isPickingColor) {
-						pickColorAtCell(cell);
-					} else if (isBucketToolActive) {
-						applyBucketFill(cell);
-					}
-				}
-			}
 			isDragging = false;
 			hasDragged = false;
 		}
@@ -779,7 +932,10 @@
 		isDragging = false;
 		hasDragged = false;
 		rightButtonHeld = false;
-		finishStroke();
+		if (rightButtonStrokeActive) {
+			finishStroke();
+		}
+		rightButtonStrokeActive = false;
 		mouseGridPos = 'unset';
 	}
 
@@ -887,6 +1043,12 @@
 			flushPendingSegments();
 		}
 
+		if (pendingIncrementalFrame !== null && typeof window !== 'undefined') {
+			window.cancelAnimationFrame(pendingIncrementalFrame);
+			pendingIncrementalFrame = null;
+			flushIncrementalPlacements();
+		}
+
 		removeWheelListener?.();
 		connection?.stop();
 	});
@@ -895,7 +1057,11 @@
 <Canvas
 	width={innerWidth.current}
 	height={innerHeight.current}
-	class="bg-black touch-none {isPickingColor || isBucketToolActive ? 'cursor-crosshair' : isDragging ? 'cursor-grabbing' : 'cursor-grab'}"
+	class="touch-none bg-black {isPickingColor || isBucketToolActive
+		? 'cursor-crosshair'
+		: isDragging
+			? 'cursor-grabbing'
+			: 'cursor-grab'}"
 	pixelRatio={pixelRatioValue}
 	onresize={(e) => (pixelRatioValue = e.pixelRatio)}
 	onmousedown={handleMouseDown}
@@ -909,10 +1075,61 @@
 	oncontextmenu={handleContextMenu}
 >
 	{#if gridData !== null}
-		<PixelLayer {gridData} {renderVersion} {offset} {scale} {pixelSize} />
+		<PixelLayer
+			{gridData}
+			{renderVersion}
+			{offset}
+			{scale}
+			{pixelSize}
+			{incrementalPlacements}
+			{incrementalVersion}
+		/>
 	{/if}
-	<CursorLayer {mouseGridPos} {offset} {scale} {pixelSize} />
+	<CursorLayer {mouseGridPos} {offset} {scale} {pixelSize} cursorSize={effectiveCursorSize} />
 </Canvas>
+
+{#if pendingBucketFillPlacements !== null}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+		role="presentation"
+		onpointerdown={stopEventPropagation}
+		onpointermove={stopEventPropagation}
+		onpointerup={stopEventPropagation}
+		oncontextmenu={handleContextMenu}
+	>
+		<div
+			class="w-full max-w-md rounded-lg border border-neutral-700 bg-neutral-900 p-5 text-neutral-100 shadow-2xl"
+			role="dialog"
+			aria-modal="true"
+			tabindex="-1"
+			onpointerdown={stopEventPropagation}
+			onpointermove={stopEventPropagation}
+			onpointerup={stopEventPropagation}
+			oncontextmenu={handleContextMenu}
+		>
+			<h2 class="text-lg font-semibold">Confirm bucket fill</h2>
+			<p class="mt-2 text-sm text-neutral-300">
+				This fill will update <strong>{pendingBucketFillPlacements.length}</strong> pixels.
+			</p>
+			<div class="mt-5 flex justify-end gap-2">
+				<button
+					type="button"
+					class="rounded-md border border-neutral-600 px-4 py-2 text-sm text-neutral-200 hover:bg-neutral-800"
+					onclick={cancelBucketFill}
+				>
+					Cancel
+				</button>
+				<button
+					type="button"
+					class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500"
+					onclick={confirmBucketFill}
+				>
+					Fill
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <div class="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-3 pb-3 sm:pb-4">
 	<div
@@ -971,11 +1188,15 @@
 		<!-- Color Palette -->
 		<ColorPalette
 			selectedColor={brushColor}
-			oncolorchange={(color) => (brushColor = color)}
+			oncolorchange={setBrushColor}
 			onpickcolor={toggleColorPicker}
 			{isPickingColor}
 			onbuckettool={toggleBucketTool}
 			{isBucketToolActive}
+			onerasertool={toggleEraserTool}
+			{isEraserToolActive}
+			{brushSize}
+			onbrushsizechange={setBrushSize}
 		/>
 	</div>
 </div>
