@@ -48,4 +48,6 @@ jobs:
           push: true
           build-args: |
             VITE_API_URL=${{ vars.VITE_API_URL }}
+            VITE_GIT_SHA=${{ github.sha }}
+            VITE_GIT_REPO=https://github.com/ne1i/pixels
           tags: ${{ vars.DOCKERHUB_USERNAME }}/pixels_site-web:latest
