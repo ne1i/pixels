@@ -49,9 +49,22 @@ public class CanvasHub(CanvasStateService canvasState, CanvasConfiguration confi
         foreach (var segment in segments)
         {
             ValidateColor(segment.Rgb);
+            var brushSize = Math.Clamp(segment.BrushSize, 1, 8);
+            var brushOffsets = CreateBrushOffsets(brushSize);
 
             foreach (var (x, y) in RasterizeSegment(segment))
-                canvasState.SetPixel(x, y, segment.Rgb);
+            {
+                foreach (var (offsetX, offsetY) in brushOffsets)
+                {
+                    var targetX = x + offsetX;
+                    var targetY = y + offsetY;
+
+                    if (targetX < 0 || targetX >= config.Width || targetY < 0 || targetY >= config.Height)
+                        continue;
+
+                    canvasState.SetPixel(targetX, targetY, segment.Rgb);
+                }
+            }
         }
 
         logger.LogInformation("Placed {Count} stroke segments by {ConnectionId}", segments.Count, Context.ConnectionId);
@@ -153,10 +166,39 @@ public class CanvasHub(CanvasStateService canvasState, CanvasConfiguration confi
     {
         return Math.Sqrt(Math.Pow(b.X - a.X, 2) + Math.Pow(b.Y - a.Y, 2));
     }
+
+    private static List<(int X, int Y)> CreateBrushOffsets(int brushSize)
+    {
+        if (brushSize <= 1)
+            return new List<(int X, int Y)> { (0, 0) };
+
+        var radius = brushSize - 1;
+        var radiusSquared = radius * radius;
+        var offsets = new List<(int X, int Y)>();
+
+        for (var y = -radius; y <= radius; y++)
+        {
+            for (var x = -radius; x <= radius; x++)
+            {
+                if (x * x + y * y <= radiusSquared)
+                    offsets.Add((x, y));
+            }
+        }
+
+        return offsets;
+    }
 }
 
 public record PixelPlacementRequest(int X, int Y, Rgb Rgb);
 public record PixelPlacedEvent(int X, int Y, Rgb Rgb);
 public record GridPoint(double X, double Y);
 public record GridCell(int X, int Y);
-public record StrokeSegmentRequest(string Kind, GridPoint From, GridPoint To, GridPoint? Control, Rgb Rgb, string ClientId);
+public record StrokeSegmentRequest(
+    [property: System.Text.Json.Serialization.JsonPropertyName("kind")] string Kind,
+    [property: System.Text.Json.Serialization.JsonPropertyName("from")] GridPoint From,
+    [property: System.Text.Json.Serialization.JsonPropertyName("to")] GridPoint To,
+    [property: System.Text.Json.Serialization.JsonPropertyName("control")] GridPoint? Control,
+    [property: System.Text.Json.Serialization.JsonPropertyName("rgb")] Rgb Rgb,
+    [property: System.Text.Json.Serialization.JsonPropertyName("clientId")] string ClientId,
+    [property: System.Text.Json.Serialization.JsonPropertyName("brushSize")] int BrushSize
+);

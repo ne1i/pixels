@@ -26,7 +26,14 @@
 	type GridPoint = { x: number; y: number };
 	type PixelPlacement = { x: number; y: number; rgb: RGB };
 	type StrokeSegment =
-		| { kind: 'line'; from: GridPoint; to: GridPoint; rgb: RGB; clientId: string }
+		| {
+				kind: 'line';
+				from: GridPoint;
+				to: GridPoint;
+				rgb: RGB;
+				clientId: string;
+				brushSize: number;
+		  }
 		| {
 				kind: 'quadratic';
 				from: GridPoint;
@@ -34,6 +41,7 @@
 				to: GridPoint;
 				rgb: RGB;
 				clientId: string;
+				brushSize: number;
 		  };
 
 	const DEFAULT_BRUSH_COLOR: Color = (() => {
@@ -59,8 +67,8 @@
 	let pixelRatioValue: number | 'auto' | undefined = $state('auto');
 	let viewportStateReady = $state(false);
 	let viewportSaveTimeout: ReturnType<typeof setTimeout> | null = null;
-	let pendingStrokePlacements: PixelPlacement[] = [];
-	let pendingStrokePlacementsFrame: number | null = null;
+	let pendingSegments: StrokeSegment[] = [];
+	let pendingSegmentsFrame: number | null = null;
 	let pendingIncrementalPlacements: PixelPlacement[] = [];
 	let pendingIncrementalFrame: number | null = null;
 	let renderVersion = $state(0);
@@ -300,37 +308,31 @@
 		applyStrokeSegmentOptimistically(createLineSegment(point, point));
 	}
 
-	function flushPendingStrokePlacements(): void {
-		const queuedPlacements = pendingStrokePlacements;
-		pendingStrokePlacements = [];
+	function flushPendingSegments(): void {
+		const queuedSegments = pendingSegments;
+		pendingSegments = [];
 
-		if (queuedPlacements.length === 0) {
+		if (queuedSegments.length === 0) {
 			return;
 		}
 
-		const unique: Record<string, PixelPlacement> = {};
-		for (const placement of queuedPlacements) {
-			unique[`${placement.x},${placement.y}`] = placement;
-		}
-
-		const dedupedPlacements = Object.values(unique);
 		connection
-			?.invoke('PlacePixels', dedupedPlacements)
-			.catch((err) => console.error('PlacePixels (stroke) failed:', err));
+			?.invoke('PlaceStrokeSegments', queuedSegments)
+			.catch((err) => console.error('PlaceStrokeSegments failed:', err));
 	}
 
-	function queueStrokePlacements(placements: PixelPlacement[]): void {
+	function queueStrokeSegment(segment: StrokeSegment): void {
 		if (typeof window === 'undefined') return;
 
-		pendingStrokePlacements = [...pendingStrokePlacements, ...placements];
+		pendingSegments = [...pendingSegments, segment];
 
-		if (pendingStrokePlacementsFrame !== null) {
+		if (pendingSegmentsFrame !== null) {
 			return;
 		}
 
-		pendingStrokePlacementsFrame = window.requestAnimationFrame(() => {
-			pendingStrokePlacementsFrame = null;
-			flushPendingStrokePlacements();
+		pendingSegmentsFrame = window.requestAnimationFrame(() => {
+			pendingSegmentsFrame = null;
+			flushPendingSegments();
 		});
 	}
 
@@ -424,10 +426,10 @@
 
 	function renderStrokeSegment(segment: StrokeSegment): GridCell[] {
 		if (segment.kind === 'line') {
-			return drawLineSegment(segment.from, segment.to);
+			return drawLineSegment(segment.from, segment.to, segment.brushSize);
 		}
 
-		return drawQuadraticSegment(segment.from, segment.control, segment.to);
+		return drawQuadraticSegment(segment.from, segment.control, segment.to, segment.brushSize);
 	}
 
 	function applyStrokeSegmentOptimistically(segment: StrokeSegment): void {
@@ -437,7 +439,7 @@
 			return;
 		}
 
-		queueStrokePlacements(placements);
+		queueStrokeSegment(segment);
 	}
 
 	function createLineSegment(from: GridPoint, to: GridPoint): StrokeSegment {
@@ -446,7 +448,8 @@
 			from,
 			to,
 			rgb: colorToRgb(getActiveStrokeColor()),
-			clientId: LOCAL_CLIENT_ID
+			clientId: LOCAL_CLIENT_ID,
+			brushSize
 		};
 	}
 
@@ -461,14 +464,16 @@
 			control,
 			to,
 			rgb: colorToRgb(getActiveStrokeColor()),
-			clientId: LOCAL_CLIENT_ID
+			clientId: LOCAL_CLIENT_ID,
+			brushSize
 		};
 	}
 
 	function paintPointSample(
 		point: GridPoint,
 		previousCell: GridCell | null,
-		cells: GridCell[]
+		cells: GridCell[],
+		strokeBrushSize: number
 	): GridCell | null {
 		const cell = toGridCell(point);
 
@@ -477,27 +482,31 @@
 		}
 
 		if (previousCell === null) {
-			applyBrushAtCell(cell, cells);
+			applyBrushAtCell(cell, cells, strokeBrushSize);
 			return cell;
 		}
 
 		if (previousCell.x !== cell.x || previousCell.y !== cell.y) {
 			const interpolatedCells = drawInterpolatedLine(previousCell, cell);
 			for (const interpolatedCell of interpolatedCells) {
-				applyBrushAtCell(interpolatedCell, cells);
+				applyBrushAtCell(interpolatedCell, cells, strokeBrushSize);
 			}
 		}
 
 		return cell;
 	}
 
-	function applyBrushAtCell(centerCell: GridCell, cells: GridCell[]): void {
-		for (const offsetCell of getBrushOffsets(brushSize)) {
+	function applyBrushAtCell(
+		centerCell: GridCell,
+		cells: GridCell[],
+		strokeBrushSize: number
+	): void {
+		for (const offsetCell of getBrushOffsets(strokeBrushSize)) {
 			cells.push({ x: centerCell.x + offsetCell.x, y: centerCell.y + offsetCell.y });
 		}
 	}
 
-	function drawLineSegment(start: GridPoint, end: GridPoint): GridCell[] {
+	function drawLineSegment(start: GridPoint, end: GridPoint, strokeBrushSize: number): GridCell[] {
 		let previousCell: GridCell | null = null;
 		const distance = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
 		const steps = Math.max(1, Math.ceil(distance * 2));
@@ -511,14 +520,20 @@
 					y: start.y + (end.y - start.y) * t
 				},
 				previousCell,
-				cells
+				cells,
+				strokeBrushSize
 			);
 		}
 
 		return cells;
 	}
 
-	function drawQuadraticSegment(start: GridPoint, control: GridPoint, end: GridPoint): GridCell[] {
+	function drawQuadraticSegment(
+		start: GridPoint,
+		control: GridPoint,
+		end: GridPoint,
+		strokeBrushSize: number
+	): GridCell[] {
 		let previousCell: GridCell | null = null;
 		const curveLength =
 			Math.hypot(control.x - start.x, control.y - start.y) +
@@ -535,7 +550,8 @@
 					y: inverseT * inverseT * start.y + 2 * inverseT * t * control.y + t * t * end.y
 				},
 				previousCell,
-				cells
+				cells,
+				strokeBrushSize
 			);
 		}
 
@@ -773,6 +789,16 @@
 
 		conn.on('PixelsPlaced', (placements: PixelPlacement[]) => {
 			setPixelColors(placements);
+		});
+
+		conn.on('StrokeSegmentsPlaced', (segments: StrokeSegment[]) => {
+			for (const segment of segments) {
+				if (segment.clientId === LOCAL_CLIENT_ID) {
+					continue;
+				}
+
+				applyColorToCells(renderStrokeSegment(segment), segment.rgb);
+			}
 		});
 
 		await conn.start();
@@ -1013,10 +1039,10 @@
 			clearTimeout(viewportSaveTimeout);
 		}
 
-		if (pendingStrokePlacementsFrame !== null && typeof window !== 'undefined') {
-			window.cancelAnimationFrame(pendingStrokePlacementsFrame);
-			pendingStrokePlacementsFrame = null;
-			flushPendingStrokePlacements();
+		if (pendingSegmentsFrame !== null && typeof window !== 'undefined') {
+			window.cancelAnimationFrame(pendingSegmentsFrame);
+			pendingSegmentsFrame = null;
+			flushPendingSegments();
 		}
 
 		if (pendingIncrementalFrame !== null && typeof window !== 'undefined') {
