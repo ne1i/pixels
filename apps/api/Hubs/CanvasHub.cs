@@ -72,6 +72,23 @@ public class CanvasHub(CanvasStateService canvasState, CanvasConfiguration confi
         await Clients.All.SendAsync("StrokeSegmentsPlaced", segments);
     }
 
+    public Task<CanvasImageDownloadResponse> DownloadCanvasImage(string format = "png")
+    {
+        if (!string.Equals(format, "png", StringComparison.OrdinalIgnoreCase))
+            throw new HubException("Unsupported image format. Only png is currently supported.");
+
+        var snapshot = canvasState.GetSnapshot();
+        var pngBytes = PngEncoder.EncodeRgb(snapshot, config.Width, config.Height);
+
+        logger.LogInformation("Canvas image download requested by {ConnectionId}", Context.ConnectionId);
+
+        return Task.FromResult(new CanvasImageDownloadResponse(
+            FileName: $"canvas-{DateTime.UtcNow:yyyyMMdd-HHmmss}.png",
+            ContentType: "image/png",
+            DataBase64: Convert.ToBase64String(pngBytes)
+        ));
+    }
+
     private void ValidateCoordinates(int x, int y)
     {
         if (x < 0 || x >= config.Width || y < 0 || y >= config.Height)
@@ -202,3 +219,5 @@ public record StrokeSegmentRequest(
     [property: System.Text.Json.Serialization.JsonPropertyName("clientId")] string ClientId,
     [property: System.Text.Json.Serialization.JsonPropertyName("brushSize")] int BrushSize
 );
+
+public record CanvasImageDownloadResponse(string FileName, string ContentType, string DataBase64);

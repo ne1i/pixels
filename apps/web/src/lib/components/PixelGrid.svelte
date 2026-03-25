@@ -25,6 +25,11 @@
 	type GridCell = { x: number; y: number };
 	type GridPoint = { x: number; y: number };
 	type PixelPlacement = { x: number; y: number; rgb: RGB };
+	type CanvasImageDownloadResponse = {
+		fileName: string;
+		contentType: string;
+		dataBase64: string;
+	};
 	type StrokeSegment =
 		| {
 				kind: 'line';
@@ -87,6 +92,7 @@
 	let isBucketToolActive = $state(false);
 	let isEraserToolActive = $state(false);
 	let brushSize = $state(1);
+	let isDownloadingImage = $state(false);
 	let effectiveCursorSize = $derived(isPickingColor || isBucketToolActive ? 1 : brushSize);
 
 	let pixelSize = $derived(INITIAL_PIXEL_SIZE);
@@ -773,6 +779,43 @@
 		event.stopPropagation();
 	}
 
+	async function downloadCanvasImage(): Promise<void> {
+		if (connection === null || isDownloadingImage) {
+			return;
+		}
+
+		isDownloadingImage = true;
+
+		try {
+			const payload = await connection.invoke<CanvasImageDownloadResponse>(
+				'DownloadCanvasImage',
+				'png'
+			);
+
+			const binary = atob(payload.dataBase64);
+			const bytes = new Uint8Array(binary.length);
+			for (let i = 0; i < binary.length; i += 1) {
+				bytes[i] = binary.charCodeAt(i);
+			}
+
+			const blob = new Blob([bytes], { type: payload.contentType || 'image/png' });
+			const objectUrl = URL.createObjectURL(blob);
+
+			const anchor = document.createElement('a');
+			anchor.href = objectUrl;
+			anchor.download = payload.fileName || 'canvas.png';
+			document.body.append(anchor);
+			anchor.click();
+			anchor.remove();
+
+			URL.revokeObjectURL(objectUrl);
+		} catch (error) {
+			console.error('DownloadCanvasImage failed:', error);
+		} finally {
+			isDownloadingImage = false;
+		}
+	}
+
 	onMount(async () => {
 		loadViewportState();
 		viewportStateReady = true;
@@ -1139,17 +1182,15 @@
 			? 'translate-y-0'
 			: 'translate-y-[calc(100%-2.75rem)]'}"
 	>
-		<!-- Toggle Button -->
-		<button
-			type="button"
-			class="pointer-events-auto mb-2 flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-neutral-300 shadow-lg ring-1 ring-neutral-700 transition-colors hover:bg-neutral-700 hover:text-white"
-			onclick={() => (isPaletteVisible = !isPaletteVisible)}
-			aria-expanded={isPaletteVisible}
-			aria-controls="color-palette-panel"
-			title={isPaletteVisible ? 'Hide palette' : 'Show palette'}
-		>
-			{#if isPaletteVisible}
-				<!-- Chevron down / collapse icon -->
+		<div class="pointer-events-auto mb-2 flex items-center gap-2">
+			<!-- Download canvas button -->
+			<button
+				type="button"
+				class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-neutral-300 shadow-lg ring-1 ring-neutral-700 transition-colors hover:bg-neutral-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+				onclick={downloadCanvasImage}
+				disabled={connection === null || isDownloadingImage}
+				title={isDownloadingImage ? 'Preparing image...' : 'Download canvas'}
+			>
 				<svg
 					xmlns="http://www.w3.org/2000/svg"
 					width="20"
@@ -1161,31 +1202,60 @@
 					stroke-linecap="round"
 					stroke-linejoin="round"
 				>
-					<path d="m6 9 6 6 6-6" />
+					<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+					<polyline points="7 10 12 15 17 10" />
+					<line x1="12" y1="15" x2="12" y2="3" />
 				</svg>
-			{:else}
-				<!-- Paint palette icon -->
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					width="20"
-					height="20"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				>
-					<circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
-					<circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
-					<circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
-					<circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
-					<path
-						d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2z"
-					/>
-				</svg>
-			{/if}
-		</button>
+			</button>
+
+			<!-- Toggle Button -->
+			<button
+				type="button"
+				class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-neutral-800 text-neutral-300 shadow-lg ring-1 ring-neutral-700 transition-colors hover:bg-neutral-700 hover:text-white"
+				onclick={() => (isPaletteVisible = !isPaletteVisible)}
+				aria-expanded={isPaletteVisible}
+				aria-controls="color-palette-panel"
+				title={isPaletteVisible ? 'Hide palette' : 'Show palette'}
+			>
+				{#if isPaletteVisible}
+					<!-- Chevron down / collapse icon -->
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						width="20"
+						height="20"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="m6 9 6 6 6-6" />
+					</svg>
+				{:else}
+					<!-- Paint palette icon -->
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						width="20"
+						height="20"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+						<circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+						<circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+						<circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+						<path
+							d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.555C21.965 6.012 17.461 2 12 2z"
+						/>
+					</svg>
+				{/if}
+			</button>
+		</div>
 
 		<!-- Color Palette -->
 		<ColorPalette
