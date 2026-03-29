@@ -6,7 +6,11 @@ using Scalar.AspNetCore;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOpenApi();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    // Default is 32 KB; JSON PlacePixels payloads exceed that around ~500+ pixels (bucket fill).
+    options.MaximumReceiveMessageSize = 512 * 1024;
+});
 builder.Services.AddSingleton<CanvasConfiguration>();
 builder.Services.AddSingleton<CanvasStateService>();
 
